@@ -154,3 +154,15 @@ against the isolated sample server on `127.0.0.1:18374` and refuses to run again
 library. Its setup uses 18 sample previews and empty curation state; it is not a production
 health check. Desktop, phone, and Echo-sized layouts are inspected with the collaborative
 browser. Actual Echo device behavior still requires an on-device check.
+
+
+Photo results offer a Grid/List toggle and ascending/descending sorting by filename,
+person name, distinct people count, location label, time taken, file creation date,
+and file size. Sorting applies to the full filtered selection before pagination;
+missing labels/dates appear last. Person sorting uses the first named person
+alphabetically. Location sorting uses the editable location label. Content queries
+retain visual similarity ranking and disable metadata sort controls. Layout and
+sort choices are retained in the page URL.
+
+`GET /api/search` accepts `sort=filename|person|people_count|location|taken_at|created_at|size`
+and `direction=asc|desc` for metadata results (including an empty content query).

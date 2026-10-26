@@ -83,6 +83,19 @@
           ><button id="clearPerson" class="person-filter" hidden></button>
         </div>
         <div class="toolbar-right">
+          <span id="photoDisplayControls">
+            <select id="photoSort" aria-label="Sort photos">
+              <option value="filename">Filename</option>
+              <option value="person">Person name</option>
+              <option value="people_count">People count</option>
+              <option value="location">Location label</option>
+              <option value="taken_at">Time taken</option>
+              <option value="created_at">File creation date</option>
+              <option value="size">File size</option>
+            </select>
+            <select id="sortDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+            <button id="listToggle" class="secondary" aria-pressed="false">List view</button>
+          </span>
           <button id="newAlbum" class="secondary" hidden>+ New album</button
           ><button
             id="filtersToggle"

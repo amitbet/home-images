@@ -173,64 +173,122 @@ func (a *AI) Run(ctx context.Context) {
 			}
 			continue
 		}
-		for _, j := range jobs {
-			for a.paused.Load() || len(a.lib.renderSlots) > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 1500*time.Millisecond {
-				if !waitContext(ctx, time.Second) {
-					return
-				}
-			}
-			if ctx.Err() != nil {
+		outage := a.indexBatch(ctx, jobs)
+		a.mu.Lock()
+		a.active = ""
+		a.mu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		if outage {
+			// Some prefetched jobs may not have completed. Re-select pending work.
+			cursor = ""
+			if !waitContext(ctx, 30*time.Second) {
 				return
 			}
-			var p Photo
-			if err = json.Unmarshal([]byte(j.Metadata), &p); err != nil {
-				a.setError(err)
-				cursor = j.ID
-				continue
-			}
-			a.mu.Lock()
-			a.active = p.Path
-			a.mu.Unlock()
-			// A single decoder and a two-second minimum gap; never takes a foreground render slot.
-			preview, err := a.lib.aiPreview(ctx, p)
-			if err != nil {
-				a.recordFailure(ctx, j, err)
-				cursor = j.ID
-			} else {
-				prediction, e := a.ml.predict(ctx, preview, "")
-				if e != nil {
-					a.mu.Lock()
-					a.online = false
-					a.active = ""
-					a.mu.Unlock()
-					a.setError(e)
-					if !waitContext(ctx, 30*time.Second) {
-						return
-					}
-					break // Retry this batch, not every file on an outage.
-				}
-				a.mu.Lock()
-				a.online = true
-				a.mu.Unlock()
-				if err = a.save(ctx, j, prediction); err != nil {
-					a.recordFailure(ctx, j, err)
-				} else {
-					a.mu.Lock()
-					a.lastError = ""
-					a.lastSuccess = time.Now().UTC().Format(time.RFC3339)
-					a.mu.Unlock()
-				}
-				cursor = j.ID
-			}
-			a.mu.Lock()
-			a.active = ""
-			a.mu.Unlock()
-			if !waitContext(ctx, time.Duration(a.lib.config.ML.IntervalMS)*time.Millisecond) {
-				return
-			}
+		} else {
+			cursor = jobs[len(jobs)-1].ID
 		}
 	}
 }
+
+// Decode one image ahead while inference/save runs. The channel is unbuffered:
+// at most the current image and one prepared preview are held in memory.
+type preparedAIJob struct {
+	job     aiJob
+	preview []byte
+	err     error
+}
+
+func prepareAIJobs(ctx context.Context, jobs []aiJob, prepare func(context.Context, aiJob) ([]byte, error)) <-chan preparedAIJob {
+	out := make(chan preparedAIJob)
+	go func() {
+		defer close(out)
+		for _, job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+			preview, err := prepare(ctx, job)
+			select {
+			case out <- preparedAIJob{job, preview, err}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
+func (a *AI) backgroundReady(ctx context.Context) bool {
+	for a.paused.Load() || len(a.lib.renderSlots) > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 1500*time.Millisecond {
+		if !waitContext(ctx, 200*time.Millisecond) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
+}
+
+func (a *AI) indexBatch(parent context.Context, jobs []aiJob) bool {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	prepared := prepareAIJobs(ctx, jobs, func(ctx context.Context, job aiJob) ([]byte, error) {
+		if !a.backgroundReady(ctx) {
+			return nil, ctx.Err()
+		}
+		var photo Photo
+		if err := json.Unmarshal([]byte(job.Metadata), &photo); err != nil {
+			return nil, err
+		}
+		return a.lib.aiPreview(ctx, photo)
+	})
+	// Always join the producer before returning, including during outages/shutdown.
+	defer func() {
+		cancel()
+		for range prepared {
+		}
+	}()
+	for item := range prepared {
+		if !a.backgroundReady(ctx) {
+			return false
+		}
+		a.mu.Lock()
+		a.active = item.job.ID
+		var photo Photo
+		if json.Unmarshal([]byte(item.job.Metadata), &photo) == nil {
+			a.active = photo.Path
+		}
+		a.mu.Unlock()
+		if item.err != nil {
+			a.recordFailure(ctx, item.job, item.err)
+		} else {
+			prediction, err := a.ml.predict(ctx, item.preview, "")
+			if ctx.Err() != nil {
+				return false
+			}
+			a.mu.Lock()
+			a.online = err == nil
+			a.mu.Unlock()
+			if err != nil {
+				a.setError(err)
+				return true
+			}
+			// Keep person clustering and all database writes serialized.
+			if err = a.save(ctx, item.job, prediction); err != nil {
+				a.recordFailure(ctx, item.job, err)
+			} else {
+				a.mu.Lock()
+				a.lastError = ""
+				a.lastSuccess = time.Now().UTC().Format(time.RFC3339)
+				a.mu.Unlock()
+			}
+		}
+		if !waitContext(ctx, time.Duration(a.lib.config.ML.IntervalMS)*time.Millisecond) {
+			return false
+		}
+	}
+	return false
+}
+
 func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
 	a.setError(e)
 	_, err := a.db.ExecContext(ctx, `INSERT INTO ai_images(image_id,signature,models,error,retry_at) VALUES(?,?,?,?,?) ON CONFLICT(image_id) DO UPDATE SET signature=excluded.signature,models=excluded.models,clip=NULL,error=excluded.error,retry_at=excluded.retry_at`, j.ID, j.Signature, a.models, e.Error(), time.Now().Add(time.Hour).Unix())

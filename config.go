@@ -38,7 +38,7 @@ func (c *MLConfig) defaults() {
 	if c.FaceModel == "" {
 		c.FaceModel = "buffalo_l"
 	}
-	if c.IntervalMS < 1000 {
+	if c.IntervalMS < 0 {
 		c.IntervalMS = 2000
 	}
 	if c.FaceSimilarity == 0 {

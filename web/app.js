@@ -2,6 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   view: "photos",
+  layout: "grid",
   person: null,
   album: null,
   items: [],
@@ -113,6 +114,9 @@ function params() {
   });
   for (const [key, id] of Object.entries(fields))
     if ($(id).value.trim()) p.set(key, $(id).value.trim());
+  p.set("sort", $("photoSort").value);
+  p.set("direction", $("sortDirection").value);
+  p.set("layout", state.layout);
   if (state.person) p.set("person", state.person.id);
   if (state.album) p.set("album", state.album.id);
   if (state.view === "favorites") p.set("favorite", "true");
@@ -137,6 +141,9 @@ function restoreQuery(query) {
   resetInputs();
   const p =
     query instanceof URLSearchParams ? query : new URLSearchParams(query);
+  if ([...$("photoSort").options].some(o => o.value === p.get("sort"))) $("photoSort").value = p.get("sort");
+  $("sortDirection").value = p.get("direction") === "desc" ? "desc" : "asc";
+  state.layout = p.get("layout") === "list" ? "list" : "grid";
   $("query").value = p.get("q") || "";
   $("mode").value = p.get("mode") === "metadata" ? "metadata" : "semantic";
   for (const [key, id] of Object.entries(fields))
@@ -175,6 +182,15 @@ function viewChrome() {
       : "Search photos";
   $("searchForm").hidden = state.view === "albums";
   $("mode").hidden = state.view === "people";
+  $("photoDisplayControls").hidden = !photoViews();
+  const ranked = $("mode").value === "semantic" && !!$("query").value.trim();
+  for (const id of ["photoSort", "sortDirection"]) {
+    $(id).disabled = ranked;
+    $(id).title = ranked ? "Content searches are ranked by visual similarity" : "";
+  }
+  $("gallery").classList.toggle("list-view", state.layout === "list");
+  $("listToggle").textContent = state.layout === "list" ? "Grid view" : "List view";
+  $("listToggle").setAttribute("aria-pressed", String(state.layout === "list"));
   $("slideshow").hidden = !photoViews();
   $("filtersToggle").hidden = !photoViews();
   $("newAlbum").hidden = state.view !== "albums";
@@ -416,6 +432,7 @@ function renderPhotos() {
     info.append(
       text("span", a.title || photo.filename, "photo-name"),
       text("span", date(photo), "photo-date"),
+      text("span", [a.location, photo.directory].filter(Boolean).join(" · "), "photo-details"),
     );
     card.append(open, heart, select, info);
     thumbnailFaces(card, img);
@@ -1696,3 +1713,13 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.playing)
     acquireWakeLock();
 });
+
+for (const id of ["photoSort", "sortDirection"]) $(id).onchange = () => {
+  state.offset = 0;
+  load();
+};
+$("listToggle").onclick = () => {
+  state.layout = state.layout === "grid" ? "list" : "grid";
+  viewChrome();
+  syncURL();
+};

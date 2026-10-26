@@ -223,7 +223,7 @@ needed on the image server. Add this section to `config.json`, then restart:
   "url": "http://192.168.1.20:3003",
   "clip_model": "ViT-B-32__openai",
   "face_model": "buffalo_l",
-  "interval_ms": 2000,
+  "interval_ms": 0,
   "face_similarity": 0.6
 }
 ```
@@ -234,7 +234,10 @@ protocol, not a versioned public API. The container downloads models on first us
 Keep its unauthenticated port restricted to your trusted network.
 
 Indexing uses a separate `ai.sqlite3` WAL database and one throttled background
-worker. Preview decoding runs in a separate single-core process with a soft 256 MiB
+worker with one-image lookahead. Preparation of the next image overlaps with
+inference and result saving; face clustering remains serialized. Set `interval_ms`
+to `0` for continuous indexing, or a positive value to throttle it. Existing explicit
+intervals remain unchanged. Preview decoding runs in a separate single-core process with a soft 256 MiB
 Go memory target and below-normal CPU priority on Windows. The worker waits while
 foreground rendering is active, never takes a foreground rendering slot, and holds
 no catalog connection while contacting the Mac. CPU, RAM and disk are still shared;
