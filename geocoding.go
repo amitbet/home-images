@@ -274,7 +274,7 @@ func photoGPS(p Photo) (float64, float64, bool) {
 	return lat, lon, a && b
 }
 func (l *Library) geocodeBatch(ctx context.Context, tree *geoNode) (int, error) {
-	rows, e := l.db.QueryContext(ctx, `SELECT i.id,i.signature,i.metadata FROM images i LEFT JOIN locations g ON g.image_id=i.id WHERE g.image_id IS NULL OR g.signature!=i.signature LIMIT 128`)
+	rows, e := l.db.QueryContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM images i LEFT JOIN locations g ON g.image_id=i.id WHERE g.image_id IS NULL OR g.signature!=i.signature LIMIT 128`)
 	if e != nil {
 		return 0, e
 	}

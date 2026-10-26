@@ -388,3 +388,50 @@ street addresses or administrative boundary determinations.
 Data attribution: [GeoNames](https://www.geonames.org/), licensed under
 [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
 The local lookup formats city, region and country names from these source files.
+
+
+## Catalog storage and migration
+
+Catalog version **1** stores lossless JSON metadata as zlib-compressed BLOBs with
+an `HIM` + version-byte header. SQLite's `PRAGMA user_version` identifies the
+catalog schema; the original unversioned catalog is version **0**. This version
+applies to `index-go.sqlite3`, independently of the AI and curation databases.
+`/health` reports `catalog_version`, and the following command inspects an existing
+catalog read-only (including a live catalog's WAL):
+
+```sh
+./home-images --db-info /path/to/index-go.sqlite3
+```
+
+Startup automatically migrates version 0 before serving requests or starting
+workers. The schema, compressed metadata, smaller search text and version marker
+commit in one transaction. Failure rolls back the entire migration; retrying is
+safe. Unknown newer versions are rejected. IDs, signatures, metadata JSON, AI
+embeddings, annotations and location results are preserved. Existing Python index
+imports and new filesystem scans also use compressed storage.
+
+For a planned upgrade, stop the service and back up the catalog first. Allow
+additional free disk space for SQLite's transaction journal/WAL and compaction.
+The first upgrade can take several minutes for a large library. To migrate a
+stopped catalog without accessing photo originals and reclaim unused pages:
+
+```sh
+./home-images --migrate-catalog /path/to/index-go.sqlite3 --compact
+./home-images --db-info /path/to/index-go.sqlite3
+```
+
+Compaction is optional and is not run automatically at startup. Older binaries
+cannot read the compressed catalog; restore the pre-upgrade backup to downgrade.
+With a generic SQLite client, metadata requires decompression before JSON queries
+(strip the four-byte header, then zlib-decompress). The application registers
+`metadata_json(metadata)` on its own SQLite connections for this purpose.
+
+The open `search` column contains deduplicated lowercase readable string values:
+paths, filenames, dates, camera names, descriptions, captions, keywords and genuine
+text comments, including Unicode. JSON property names, numeric values/arrays,
+API URLs and strings containing binary control bytes or invalid-text replacement
+characters are excluded. Their original data remains in compressed metadata.
+Curation titles/descriptions/tags/locations continue to be searched separately;
+semantic object/event search (for example, dogs or birthday scenes) continues to
+use CLIP embeddings in the AI database. Date and size filters/sorts use separate
+columns maintained when metadata changes, without decompressing the catalog.

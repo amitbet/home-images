@@ -109,7 +109,7 @@ func (l *Library) health(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	status := l.Status()
-	return writeJSON(w, 200, map[string]any{"status": "ok", "implementation": "go", "version": version, "images": count, "root_available": fileAvailable(l.rootPath), "scanning": status.Scanning, "last_scan": status.LastScan, "errors": status.Errors})
+	return writeJSON(w, 200, map[string]any{"status": "ok", "implementation": "go", "catalog_version": catalogVersion, "version": version, "images": count, "root_available": fileAvailable(l.rootPath), "scanning": status.Scanning, "last_scan": status.LastScan, "errors": status.Errors})
 }
 func (l *Library) directories(w http.ResponseWriter, r *http.Request) error {
 	directory, err := l.directory(r.URL.Query().Get("directory"))
@@ -203,7 +203,7 @@ func (l *Library) images(w http.ResponseWriter, r *http.Request) error {
 	if err = l.db.QueryRowContext(r.Context(), "SELECT count(*) FROM images WHERE "+clause, args...).Scan(&count); err != nil {
 		return err
 	}
-	rows, err := l.db.QueryContext(r.Context(), "SELECT metadata FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := l.db.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return err
 	}

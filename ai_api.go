@@ -474,7 +474,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata FROM catalog.images i WHERE "+clause+" ORDER BY "+order+" LIMIT ? OFFSET ?", append(append(args, sortArgs...), limit, offset)...)
+		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM catalog.images i WHERE "+clause+" ORDER BY "+order+" LIMIT ? OFFSET ?", append(append(args, sortArgs...), limit, offset)...)
 		if e != nil {
 			return e
 		}
@@ -531,11 +531,11 @@ func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	case "", "filename":
 		expr = "i.path"
 	case "taken_at":
-		expr = "nullif(json_extract(i.metadata,'$.taken_at'),'')"
+		expr = "nullif(i.taken_at,'')"
 	case "created_at":
-		expr = "json_extract(i.metadata,'$.created_at')"
+		expr = "i.created_at"
 	case "size":
-		expr = "json_extract(i.metadata,'$.size_bytes')"
+		expr = "i.size_bytes"
 	case "location":
 		expr = "coalesce((SELECT nullif(location,'') FROM curation.annotations WHERE root=? AND image_id=i.id),(SELECT nullif(label,'') FROM catalog.locations g WHERE g.image_id=i.id AND g.signature=i.signature))"
 		args = []any{a.lib.rootPath}

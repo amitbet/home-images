@@ -91,6 +91,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	if err = migrateCatalog(db); err != nil {
+		l.Close()
+		return nil, err
+	}
 	var previous string
 	err = db.QueryRow("SELECT value FROM settings WHERE key='root'").Scan(&previous)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -274,7 +278,7 @@ func (l *Library) Scan(ctx context.Context) {
 			l.scanError(err)
 			return nil
 		}
-		_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images VALUES(?,?,?,?,?,?)", photo.ID, path, photo.Directory, signature, string(encoded), strings.ToLower(string(encoded)))
+		_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images(id,path,directory,signature,metadata,search) VALUES(?,?,?,?,metadata_pack(?),metadata_search(?))", photo.ID, path, photo.Directory, signature, string(encoded), string(encoded))
 		return err
 	})
 	if err != nil {
@@ -321,7 +325,7 @@ func (l *Library) Scan(ctx context.Context) {
 func imageID(path string) string { s := sha256.Sum256([]byte(path)); return hex.EncodeToString(s[:12]) }
 func (l *Library) get(ctx context.Context, id string) (Photo, error) {
 	var encoded string
-	err := l.db.QueryRowContext(ctx, "SELECT metadata FROM images WHERE id=?", id).Scan(&encoded)
+	err := l.db.QueryRowContext(ctx, "SELECT metadata_json(metadata) FROM images WHERE id=?", id).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, bad(404, "Unknown image")
 	}

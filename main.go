@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -90,7 +91,46 @@ func main() {
 	showVersion := flag.Bool("version", false, "Print version")
 	importIndex := flag.String("import-python-index", "", "One-time read-only import of a previous Python SQLite index")
 	aiPreview := flag.String("ai-preview", "", "Internal: generate an indexing preview using config on stdin")
+	dbInfo := flag.String("db-info", "", "Inspect catalog schema version without opening the service")
+	migratePath := flag.String("migrate-catalog", "", "Migrate a stopped-service catalog without accessing photo originals")
+	compact := flag.Bool("compact", false, "Reclaim free pages after --migrate-catalog (requires temporary disk space)")
 	flag.Parse()
+	if *migratePath != "" {
+		if _, err := os.Stat(*migratePath); err != nil {
+			log.Fatal(err)
+		}
+		db := openSQLite(*migratePath, nil, false)
+		defer db.Close()
+		if err := migrateCatalog(db); err != nil {
+			log.Fatal(err)
+		}
+		if *compact {
+			if _, err := db.Exec("VACUUM"); err != nil {
+				log.Fatal(err)
+			}
+		}
+		fmt.Printf("Catalog migrated to version %d\n", catalogVersion)
+		return
+	}
+	if *dbInfo != "" {
+		absolute, err := filepath.Abs(*dbInfo)
+		if err != nil {
+			log.Fatal(err)
+		}
+		uriPath := filepath.ToSlash(absolute)
+		if filepath.VolumeName(absolute) != "" {
+			uriPath = "/" + uriPath
+		}
+		uri := (&url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro"}).String()
+		db := openSQLite(uri, nil, true)
+		defer db.Close()
+		var v int
+		if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Catalog version: %d (supported: %d)\n", v, catalogVersion)
+		return
+	}
 	if *aiPreview != "" {
 		if err := runAIPreview(*aiPreview); err != nil {
 			fmt.Fprintln(os.Stderr, err)

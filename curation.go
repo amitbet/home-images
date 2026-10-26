@@ -201,7 +201,7 @@ func (l *Library) curationSelection(r *http.Request, clause string, args []any) 
 		clause += ` AND id IN(SELECT m.image_id FROM curation.album_images m JOIN curation.albums c ON c.id=m.album_id WHERE c.root=? AND c.id=?)`
 		args = append(args, root, id)
 	}
-	dateExpr := `replace(substr(coalesce(json_extract(metadata,'$.taken_at'),json_extract(metadata,'$.created_at'),''),1,10),':','-')`
+	dateExpr := `replace(substr(coalesce(taken_at,created_at,''),1,10),':','-')`
 	for _, key := range []string{"from", "to"} {
 		if value := q.Get(key); value != "" {
 			if _, err := time.Parse("2006-01-02", value); err != nil {

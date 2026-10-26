@@ -119,7 +119,7 @@ func waitContext(ctx context.Context, d time.Duration) bool {
 type aiJob struct{ ID, Signature, Metadata string }
 
 func (a *AI) jobs(ctx context.Context, after string) ([]aiJob, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT i.id,i.signature,i.metadata FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
+	rows, err := a.db.QueryContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
  WHERE i.id>? AND (a.image_id IS NULL OR a.signature!=i.signature OR a.models!=? OR (a.error!='' AND a.retry_at<=?)) ORDER BY i.id LIMIT 32`, after, a.models, time.Now().Unix())
 	if err != nil {
 		return nil, err
