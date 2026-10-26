@@ -1,0 +1,146 @@
+[
+  {
+    "method": "ffmpeg-full",
+    "target": "480x270",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 3034.9126999499276,
+        "ms_per_image": 101.16375666499759,
+        "bytes_per_image": 26770.0
+      },
+      {
+        "total_ms": 2657.368900021538,
+        "ms_per_image": 88.57896333405127,
+        "bytes_per_image": 26770.0
+      }
+    ],
+    "median_ms_per_image": 94.87135999952443
+  },
+  {
+    "method": "ffmpeg-lowres",
+    "target": "480x270",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 2358.464299933985,
+        "ms_per_image": 78.61547666446616,
+        "bytes_per_image": 24453.0
+      },
+      {
+        "total_ms": 1981.383900041692,
+        "ms_per_image": 66.04613000138973,
+        "bytes_per_image": 24453.0
+      }
+    ],
+    "median_ms_per_image": 72.33080333292794
+  },
+  {
+    "method": "qsv-scale",
+    "target": "480x270",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 1792.4026999389753,
+        "ms_per_image": 59.74675666463251,
+        "bytes_per_image": 29709.0
+      },
+      {
+        "total_ms": 1292.8996999980882,
+        "ms_per_image": 43.09665666660294,
+        "bytes_per_image": 29709.0
+      }
+    ],
+    "median_ms_per_image": 51.42170666561772
+  },
+  {
+    "method": "qsv-all",
+    "target": "480x270",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 1296.0176999913529,
+        "ms_per_image": 43.20058999971176,
+        "bytes_per_image": 23565.0
+      },
+      {
+        "total_ms": 1391.1691000685096,
+        "ms_per_image": 46.372303335616984,
+        "bytes_per_image": 23565.0
+      }
+    ],
+    "median_ms_per_image": 44.78644666766437
+  },
+  {
+    "method": "ffmpeg-full",
+    "target": "1920x1080",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 2613.821699982509,
+        "ms_per_image": 87.12738999941696,
+        "bytes_per_image": 256628.0
+      },
+      {
+        "total_ms": 2468.2592999888584,
+        "ms_per_image": 82.27530999962862,
+        "bytes_per_image": 256628.0
+      }
+    ],
+    "median_ms_per_image": 84.70134999952279
+  },
+  {
+    "method": "ffmpeg-lowres",
+    "target": "1920x1080",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 2636.462000082247,
+        "ms_per_image": 87.88206666940823,
+        "bytes_per_image": 255083.0
+      },
+      {
+        "total_ms": 2735.4687999468297,
+        "ms_per_image": 91.18229333156098,
+        "bytes_per_image": 255083.0
+      }
+    ],
+    "median_ms_per_image": 89.5321800004846
+  },
+  {
+    "method": "qsv-scale",
+    "target": "1920x1080",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 1813.2911000866443,
+        "ms_per_image": 60.44303666955481,
+        "bytes_per_image": 308428.0
+      },
+      {
+        "total_ms": 2262.1494999621063,
+        "ms_per_image": 75.40498333207022,
+        "bytes_per_image": 308428.0
+      }
+    ],
+    "median_ms_per_image": 67.92401000081252
+  },
+  {
+    "method": "qsv-all",
+    "target": "1920x1080",
+    "frames": 30,
+    "runs": [
+      {
+        "total_ms": 1550.1200000289828,
+        "ms_per_image": 51.67066666763276,
+        "bytes_per_image": 411698.0
+      },
+      {
+        "total_ms": 1510.5269000632688,
+        "ms_per_image": 50.350896668775626,
+        "bytes_per_image": 411698.0
+      }
+    ],
+    "median_ms_per_image": 51.01078166820419
+  }
+]

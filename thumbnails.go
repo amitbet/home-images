@@ -32,9 +32,11 @@ type thumbnailFlight struct {
 	err  error
 }
 type thumbnailCache struct {
-	root    string
-	mu      sync.Mutex
-	flights map[string]*thumbnailFlight
+	root      string
+	mu        sync.Mutex
+	flights   map[string]*thumbnailFlight
+	nextPrune time.Time
+	pruneMu   sync.Mutex
 }
 
 func newThumbnailCache(dataDir string) *thumbnailCache {
@@ -98,6 +100,13 @@ func (c *thumbnailCache) store(key string, data []byte) error {
 		}
 		return err
 	}
+	// Enforce the shared disk budget even during continuous foreground browsing.
+	c.mu.Lock()
+	if time.Now().After(c.nextPrune) {
+		c.nextPrune = time.Now().Add(time.Minute)
+		go c.prune(thumbnailBudget)
+	}
+	c.mu.Unlock()
 	return nil
 }
 func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]byte, error)) ([]byte, error) {
@@ -141,8 +150,8 @@ func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]by
 	}
 }
 
-// jpeg caches small previews. Larger viewer/Echo requests still preserve their
-// requested dimensions and never fill the thumbnail cache with large variants.
+// Cache thumbnails and the standard viewer variant. Arbitrary large dimensions
+// remain uncached to keep the shared disk budget useful.
 func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int) ([]byte, error) {
 	build := func() ([]byte, error) {
 		if l.renderSlots != nil {
@@ -158,7 +167,7 @@ func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int)
 		}
 		return l.renderJPEG(ctx, p, width, height, quality)
 	}
-	if l.thumbnails == nil || width > 640 || height > 640 {
+	if l.thumbnails == nil || ((width > 640 || height > 640) && !(width == 1920 && height == 1440 && quality == 85)) {
 		return build()
 	}
 	key, err := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", width, height, quality))
@@ -311,6 +320,8 @@ func (l *Library) warmThumbnails(ctx context.Context) {
 // The cache is disposable. Only generated hash-named JPEGs inside its own
 // directory are eligible for eviction; originals and annotations are untouched.
 func (c *thumbnailCache) prune(limit int64) {
+	c.pruneMu.Lock()
+	defer c.pruneMu.Unlock()
 	type entry struct {
 		path     string
 		size     int64

@@ -158,6 +158,20 @@ func TestThumbnailSeedingAndFaceCache(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatal(res.StatusCode, string(data))
 	}
+	etag := res.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("portrait has no validator")
+	}
+	request, _ := http.NewRequest("GET", s.URL+groups.Items[0].ImageURL, nil)
+	request.Header.Set("If-None-Match", etag)
+	validated, err := s.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated.Body.Close()
+	if validated.StatusCode != http.StatusNotModified {
+		t.Fatal("portrait revalidation", validated.StatusCode)
+	}
 	cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
 	if err != nil || cfg.Width != 160 || cfg.Height != 160 {
 		t.Fatal(cfg, err)
@@ -205,5 +219,54 @@ func TestThumbnailPruningOnlyGeneratedFiles(t *testing.T) {
 	})
 	if total > 16 {
 		t.Fatal("cache still over budget", total)
+	}
+}
+
+func TestViewerPreviewCacheAndInvalidation(t *testing.T) {
+	l, server, root := fixture(t)
+	job := testJob(t, l, "a.jpg")
+	p, err := l.get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := server.URL + "/api/images/" + p.ID + "/image?width=1920&height=1440"
+	get := func() []byte {
+		t.Helper()
+		res, err := server.Client().Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		data, _ := io.ReadAll(res.Body)
+		if res.StatusCode != 200 {
+			t.Fatalf("%d: %s", res.StatusCode, data)
+		}
+		return data
+	}
+	first := get()
+	key, err := l.previewKey(p, "image:1920:1440:85")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached, ok := l.thumbnails.read(key); !ok || !bytes.Equal(cached, first) {
+		t.Fatal("viewer preview not cached")
+	}
+	// A cache hit must not need a decoder/render slot.
+	l.renderSlots = make(chan struct{}, 1)
+	l.renderSlots <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	second, err := l.jpeg(ctx, p, 1920, 1440, 85)
+	<-l.renderSlots
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatal("cached viewer used renderer", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.jpg"), testJPEG(t, 900, 450), 0644); err != nil {
+		t.Fatal(err)
+	}
+	changed := get()
+	config, err := jpeg.DecodeConfig(bytes.NewReader(changed))
+	if err != nil || config.Width != 900 || config.Height != 450 || bytes.Equal(first, changed) {
+		t.Fatal("stale viewer preview", config, err)
 	}
 }

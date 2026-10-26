@@ -306,15 +306,37 @@
         </div>
       </form>
       <hr />
-      <h3>Merge with another group</h3>
-      <label for="mergeSearch">Find the person to keep</label
-      ><input id="mergeSearch" placeholder="Search names" /><label
-        for="mergeTarget"
-        >Merge this group into</label
-      ><select id="mergeTarget">
-        <option value="">Choose a person…</option></select
-      ><button id="mergePerson" class="secondary">Merge groups</button>
+      <section id="faceCorrection" hidden>
+        <h3>Correct this face</h3><p>Move only this face to the person selected below.</p>
+        <button id="moveFace" class="secondary">Move this face</button>
+      </section>
+      <button id="undoMerge" class="secondary" hidden>Undo latest merge</button>
+      <p id="undoNote" hidden>Restores the original groups. Faces indexed since the merge stay in their current group.</p>
+      <h3>Same person, different group?</h3>
+      <img id="reviewPortrait" width="88" height="88" alt="Current face group" />
+      <h4>Possible matches</h4>
+      <p>Review these groups before merging. Similarity is a suggestion, not a confirmed identity.</p>
+      <div id="personSuggestions" aria-live="polite"></div>
+      <h4>Find another group</h4>
+      <label for="mergeSearch">Search groups to add to this person</label>
+      <input id="mergeSearch" placeholder="Search names" />
+      <div id="mergeResults" class="merge-results"></div>
+      <p id="mergeSelectionCount" aria-live="polite">No groups selected</p>
+      <button id="mergePerson" class="primary" disabled>Review selected groups</button>
+      <div id="singleFaceTarget" hidden><label for="mergeTarget">Move face to</label><select id="mergeTarget"></select></div>
       <p id="editError" role="alert"></p>
+    </dialog>
+    <dialog id="mergeConfirm" class="person-editor" aria-labelledby="mergeConfirmTitle">
+      <h2 id="mergeConfirmTitle">Merge selected groups?</h2>
+      <p id="mergeKeepName"></p>
+      <div id="mergeConfirmGroups"></div>
+      <p>All selected faces will belong to this person. You can undo merges one group at a time.</p>
+      <p id="mergeConfirmError" role="alert"></p>
+      <div class="dialog-actions"><button id="cancelMergeConfirm" class="secondary">Back</button><button id="confirmMergeGroups" class="primary">Confirm merge</button></div>
+    </dialog>
+    <dialog id="personActionConfirm" class="person-editor" aria-labelledby="personActionTitle">
+      <h2 id="personActionTitle">Confirm change</h2><p id="personActionMessage"></p>
+      <div class="dialog-actions"><button id="personActionCancel" class="secondary">Cancel</button><button id="personActionOK" class="primary">Confirm</button></div>
     </dialog>
     <dialog id="nameDialog" class="person-editor">
       <form id="nameForm">

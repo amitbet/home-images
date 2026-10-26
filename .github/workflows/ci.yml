@@ -15,6 +15,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Package optional native JPEG codec
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-turbojpeg.ps1
+          go build -o dist/native-jpeg-test.exe .
+          if ($LASTEXITCODE -ne 0) { throw 'Native worker test build failed' }
+          "HOMEIMAGES_TEST_PREVIEW_EXE=$((Resolve-Path dist/native-jpeg-test.exe).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HOMEIMAGES_TEST_TURBO_DLL=$((Resolve-Path dist/turbojpeg.dll).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - run: go test -count=1 ./...
       - run: go vet ./...
       - if: runner.os != 'Windows'
@@ -47,3 +56,23 @@ jobs:
         with:
           name: home-images-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
+
+  accelerated-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - shell: pwsh
+        run: |
+          ./scripts/package-turbojpeg.ps1
+          go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_SHA" -o dist/home-images-windows-amd64.exe .
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: home-images-windows-amd64-accelerated
+          path: |
+            dist/home-images-windows-amd64.exe
+            dist/turbojpeg.dll
+            dist/turbojpeg-licenses/

@@ -52,6 +52,8 @@ func newAI(l *Library) (*AI, error) {
  CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',model TEXT NOT NULL,embedding BLOB NOT NULL,merged_into INTEGER);
  CREATE TABLE IF NOT EXISTS faces(id INTEGER PRIMARY KEY,image_id TEXT NOT NULL,person_id INTEGER NOT NULL,box TEXT NOT NULL,score REAL NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS face_image ON faces(image_id); CREATE INDEX IF NOT EXISTS face_person ON faces(person_id,image_id);
+ CREATE TABLE IF NOT EXISTS face_overrides(image_id TEXT NOT NULL,signature TEXT NOT NULL,model TEXT NOT NULL,box TEXT NOT NULL,person_id INTEGER NOT NULL,PRIMARY KEY(image_id,signature,model,box));
+ CREATE TABLE IF NOT EXISTS person_dismissals(a INTEGER NOT NULL,b INTEGER NOT NULL,PRIMARY KEY(a,b));
  CREATE TABLE IF NOT EXISTS ai_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	if err != nil {
 		return fail(err)
@@ -62,7 +64,7 @@ func newAI(l *Library) (*AI, error) {
 		return fail(err)
 	}
 	if root != "" && root != l.rootPath {
-		if _, err = a.db.Exec("DELETE FROM faces;DELETE FROM people;DELETE FROM ai_images;"); err != nil {
+		if _, err = a.db.Exec("DELETE FROM faces;DELETE FROM people;DELETE FROM ai_images;DELETE FROM person_dismissals;DELETE FROM face_overrides;DELETE FROM ai_settings WHERE key='merge_undo';"); err != nil {
 			return fail(err)
 		}
 	}
@@ -313,6 +315,14 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 				}
 			}
 		}
+		box, _ := json.Marshal(f.Box)
+		var override int64
+		e := tx.QueryRowContext(ctx, `SELECT coalesce(p.merged_into,p.id) FROM face_overrides o JOIN people p ON p.id=o.person_id WHERE o.image_id=? AND o.signature=? AND o.model=? AND o.box=?`, j.ID, j.Signature, a.lib.config.ML.FaceModel, string(box)).Scan(&override)
+		if e == nil {
+			id = override
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
 		if id == 0 {
 			result, e := tx.ExecContext(ctx, "INSERT INTO people(model,embedding) VALUES(?,?)", a.lib.config.ML.FaceModel, vectors[i].blob())
 			if e != nil {
@@ -325,7 +335,6 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 			people = append(people, personVector{id, vectors[i]})
 		}
 		used[id] = true
-		box, _ := json.Marshal(f.Box)
 		if _, err = tx.ExecContext(ctx, "INSERT INTO faces(image_id,person_id,box,score,width,height) VALUES(?,?,?,?,?,?)", j.ID, id, string(box), f.Score, p.Width, p.Height); err != nil {
 			return err
 		}

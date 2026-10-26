@@ -46,6 +46,23 @@ combine that person with content, folder, date, and annotation filters. Give gro
 and search those names in **People**. Use **Edit name / merge** to combine groups; the
 target selector can search names so it is not limited to the first page of people.
 
+**Name / review matches** shows the current portrait and up to 12 similar groups,
+with portraits, photo counts, and links to inspect their photos in another tab.
+Choose **Review merge**, then confirm **Merge groups** to keep the selected target.
+All retained group representatives remain available for future matching. Suggestions
+never merge automatically. **Not the same person** persistently dismisses the pair
+in both directions. Groups already appearing together in a photo are excluded from
+suggestions. Similarity uses retained group representatives, not every individual
+face; age and appearance changes may still require a manual search.
+
+Open a photo and click a face name to access **Move this face**. Select the correct
+person below and confirm; only that face moves. The correction survives reindexing of the unchanged photo with
+the same model and face box. **Undo latest merge** restores the
+most recent merge's original face assignments and group representatives, including
+the source name. Photos indexed after the merge stay with their current group.
+A subsequent merge replaces the undo; moving a face or dismissing a suggestion clears
+it so undo cannot overwrite later corrections.
+
 The status card shows indexed/pending/failed counts, worker availability, pause/resume,
 and retry controls. Browsing and annotations work independently of the Mac's availability.
 On small screens, the navigation scrolls horizontally; **Saved** opens saved selections
@@ -142,3 +159,26 @@ against the isolated sample server on `127.0.0.1:18374` and refuses to run again
 library. Its setup uses 18 sample previews and empty curation state; it is not a production
 health check. Desktop, phone, and Echo-sized layouts are inspected with the collaborative
 browser. Actual Echo device behavior still requires an on-device check.
+
+### Viewer preview performance
+
+The viewer shows a gallery thumbnail immediately while the 1920?1440 JPEG loads.
+Standard viewer previews persist alongside thumbnails in the shared 4 GiB disk cache;
+source size/modification changes invalidate them. Cache eviction runs periodically
+on writes, so the limit can be exceeded briefly during generation. Arbitrary large
+API variants remain uncached. After the current preview loads, the UI preloads one
+next photo at low priority; playback reuses the prefetched selection, including random
+playback. Closing or navigating the viewer cancels obsolete image requests.
+
+Grid thumbnails use a per-tab 32 MiB/512-entry memory cache with five-minute
+freshness, backed by the browser HTTP cache. At most two thumbnail fetches run
+at once; page navigation aborts obsolete fetches and discards queued work.
+People thumbnail ETags allow unchanged portraits to revalidate without decoding.
+
+### Merge several face groups
+
+Open a person's review dialog, check matching groups in suggestions or name search,
+then choose **Review selected groups**. Selections persist across searches. The review
+dialog shows every selected portrait and the person being kept before **Confirm merge**.
+The batch is atomic; undo restores its sources one at a time in reverse order.
+Merge, undo, and face-move confirmations use application dialogs.

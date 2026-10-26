@@ -10,6 +10,22 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $BinaryPath) { $BinaryPath = Join-Path $PSScriptRoot 'dist\home-images-windows-amd64.exe' }
 function Check-Exit([string]$Action) { if ($LASTEXITCODE -ne 0) { throw "$Action failed: exit $LASTEXITCODE" } }
+function Wait-ProgramFiles([string]$Directory) {
+    # Service status can change before its last preview child releases the files.
+    for ($attempt=0; $attempt -lt 50; $attempt++) {
+        $ready = $true
+        foreach ($name in @('home-images.exe','turbojpeg.dll')) {
+            $path = Join-Path $Directory $name
+            if (Test-Path -LiteralPath $path) {
+                try { $handle = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None); $handle.Dispose() }
+                catch [IO.IOException] { $ready = $false }
+            }
+        }
+        if ($ready) { return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw 'A preview worker is still shutting down; installation was not replaced. Retry shortly.'
+}
 $BinaryPath = (Resolve-Path -LiteralPath $BinaryPath).Path
 $Destination = [IO.Path]::GetFullPath($Destination).TrimEnd('\')
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory).TrimEnd('\')
@@ -48,10 +64,18 @@ $binary = Join-Path $Destination 'home-images.exe'
 $moved = $false
 $installedNew = $false
 try {
-    if ($old) { Stop-Service HomeImages; (Get-Service HomeImages).WaitForStatus('Stopped', '00:00:30') }
+    if ($old) { Stop-Service HomeImages; (Get-Service HomeImages).WaitForStatus('Stopped', '00:00:30'); Wait-ProgramFiles $Destination }
     if (Test-Path -LiteralPath $Destination) { Move-Item -LiteralPath $Destination -Destination $oldProgram; $moved = $true }
     New-Item -ItemType Directory -Force $Destination | Out-Null
     Copy-Item -LiteralPath $BinaryPath -Destination $binary
+    $codec = Join-Path (Split-Path -Parent $BinaryPath) 'turbojpeg.dll'
+    if (Test-Path -LiteralPath $codec) {
+        Copy-Item -LiteralPath $codec -Destination $Destination
+        $codecLicenses = Join-Path (Split-Path -Parent $BinaryPath) 'turbojpeg-licenses'
+        if (-not (Test-Path -LiteralPath $codecLicenses -PathType Container)) { throw 'TurboJPEG license files are missing; run scripts/package-turbojpeg.ps1' }
+        Copy-Item -LiteralPath $codecLicenses -Destination $Destination -Recurse
+    }
+
     & icacls $Destination /grant '*S-1-5-19:(OI)(CI)(RX)' | Out-Null; Check-Exit 'Grant program access'
     & icacls $DataDirectory /grant '*S-1-5-19:(OI)(CI)(M)' | Out-Null; Check-Exit 'Grant data access'
     & icacls $config.root /grant '*S-1-5-19:(OI)(CI)(RX)' | Out-Null; Check-Exit 'Grant photo access'

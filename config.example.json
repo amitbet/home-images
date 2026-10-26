@@ -6,6 +6,7 @@
   "scan_interval_seconds": 900,
   "cors_origins": ["http://dashboard.local"],
   "ffmpeg": "ffmpeg",
+  "jpeg_decoder": "auto",
   "max_pixels": 80000000,
   "ml": {
     "enabled": false,

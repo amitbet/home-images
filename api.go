@@ -109,7 +109,7 @@ func (l *Library) health(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	status := l.Status()
-	return writeJSON(w, 200, map[string]any{"status": "ok", "implementation": "go", "version": version, "images": count, "root_available": fileAvailable(l.rootPath), "scanning": status.Scanning, "last_scan": status.LastScan, "errors": status.Errors})
+	return writeJSON(w, 200, map[string]any{"status": "ok", "implementation": "go", "jpeg_decoder": jpegDecoderName(l.config), "version": version, "images": count, "root_available": fileAvailable(l.rootPath), "scanning": status.Scanning, "last_scan": status.LastScan, "errors": status.Errors})
 }
 func (l *Library) directories(w http.ResponseWriter, r *http.Request) error {
 	directory, err := l.directory(r.URL.Query().Get("directory"))

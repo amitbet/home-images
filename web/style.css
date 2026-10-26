@@ -1429,3 +1429,17 @@ dialog::backdrop {
     transition: none !important;
   }
 }
+
+#reviewPortrait { border-radius: 50%; object-fit: cover; }
+.face-suggestion { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--border); }
+.face-suggestion img { border-radius:12px; object-fit:cover; }
+.face-suggestion > div { flex:1; min-width:120px; }
+.face-suggestion p { margin:4px 0; }
+.person-editor { max-height:90vh; overflow:auto; }
+
+.merge-results { max-height: 320px; overflow: auto; }
+.face-suggestion.selected { background: var(--surface); outline: 2px solid var(--accent); border-radius: 12px; }
+.person-editor .merge-choice { display:flex; align-items:center; gap:8px; cursor:pointer; margin:0; }
+.person-editor .merge-choice input { width:20px; height:20px; margin:0; }
+#mergeConfirmGroups { max-height:45vh; overflow:auto; }
+#mergeConfirmError { color:var(--danger); }

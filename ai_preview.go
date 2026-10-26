@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -40,11 +41,22 @@ type previewRequest struct {
 }
 
 func (l *Library) processPreview(ctx context.Context, p Photo, width, height, quality int) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Second)
+	defer cancel()
+	data, err := l.processPreviewConfig(ctx, p, width, height, quality, l.config)
+	if err != nil && ctx.Err() == nil && l.config.JPEGDecoder != "go" && nativeJPEGName() == "turbojpeg" && (p.Format == "JPEG" || strings.EqualFold(filepath.Ext(p.Path), ".jpg") || strings.EqualFold(filepath.Ext(p.Path), ".jpeg")) {
+		fallback := l.config
+		fallback.JPEGDecoder = "go"
+		return l.processPreviewConfig(ctx, p, width, height, quality, fallback)
+	}
+	return data, err
+}
+func (l *Library) processPreviewConfig(ctx context.Context, p Photo, width, height, quality int, config Config) ([]byte, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(previewRequest{Config: l.config, Width: width, Height: height, Quality: quality})
+	data, err := json.Marshal(previewRequest{Config: config, Width: width, Height: height, Quality: quality})
 	if err != nil {
 		return nil, err
 	}

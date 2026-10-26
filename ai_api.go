@@ -16,9 +16,15 @@ import (
 func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	a.curationRoutes(mux, wrap)
 	mux.HandleFunc("/api/indexing", wrap(a.indexStatus))
+	mux.HandleFunc("/api/people/{person}/merge-many", a.mutation(a.mergeMany))
 	mux.HandleFunc("/api/search", wrap(a.search))
 	mux.HandleFunc("/api/playback/next", wrap(a.playbackNext))
 	mux.HandleFunc("/api/people", wrap(a.people))
+	mux.HandleFunc("/api/people/undo", a.mutation(a.undoPersonMerge))
+	mux.HandleFunc("/api/people/merge-history", wrap(a.personMergeHistory))
+	mux.HandleFunc("/api/faces/{face}", a.mutation(a.moveFace))
+	mux.HandleFunc("/api/people/{person}/suggestions", wrap(a.personSuggestions))
+	mux.HandleFunc("/api/people/{person}/dismiss", a.mutation(a.dismissPerson))
 	mux.HandleFunc("/api/people/{person}/image", wrap(a.faceImage))
 	mux.HandleFunc("/api/images/{id}/faces", wrap(a.imageFaces))
 	mux.HandleFunc("/api/indexing/control", a.mutation(a.control))
@@ -132,32 +138,13 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer tx.Rollback()
 	var model string
-	if err = tx.QueryRow("SELECT model FROM people WHERE id=?", id).Scan(&model); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRow("SELECT model FROM people WHERE id=? AND merged_into IS NULL", id).Scan(&model); errors.Is(err, sql.ErrNoRows) {
 		return bad(404, "Person not found")
 	} else if err != nil {
 		return err
 	}
 	if body.MergeInto != 0 {
-		if body.MergeInto == id {
-			return bad(400, "Choose a different group")
-		}
-		var targetModel string
-		if err = tx.QueryRow("SELECT model FROM people WHERE id=?", body.MergeInto).Scan(&targetModel); errors.Is(err, sql.ErrNoRows) {
-			return bad(404, "Target person not found")
-		} else if err != nil {
-			return err
-		}
-		if model != targetModel {
-			return bad(400, "Groups from different face models cannot be merged")
-		}
-		// Keep source representatives as aliases so future photos match either group.
-		if _, err = tx.Exec("UPDATE faces SET person_id=? WHERE person_id=?", body.MergeInto, id); err != nil {
-			return err
-		}
-		if _, err = tx.Exec("UPDATE people SET name='', merged_into=? WHERE id=?", body.MergeInto, id); err != nil {
-			return err
-		}
-		if _, err = tx.Exec("UPDATE people SET merged_into=? WHERE merged_into=?", body.MergeInto, id); err != nil {
+		if err = mergePersonGroups(tx, id, body.MergeInto, model); err != nil {
 			return err
 		}
 	} else if body.Name != nil {
@@ -209,7 +196,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	if err = a.read.QueryRowContext(r.Context(), "SELECT count(DISTINCT p.id)"+base, args...).Scan(&total); err != nil {
 		return err
 	}
-	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY (p.name!='') DESC,count(DISTINCT f.image_id) DESC,p.id LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return err
 	}
@@ -277,6 +264,17 @@ func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
 	p, err := a.lib.get(r.Context(), imageID)
 	if err != nil {
 		return err
+	}
+	key, err := a.lib.previewKey(p, fmt.Sprintf("face:%s:%d:%d:160", box, width, height))
+	if err != nil {
+		return err
+	}
+	etag := `"` + key + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private,max-age=300")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 	data, err := a.lib.faceThumbnail(r.Context(), p, box, width, height)
 	if err != nil {
@@ -373,4 +371,98 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		items = append(items, item)
 	}
 	return writeJSON(w, 200, map[string]any{"items": items, "total": min(total, 1200), "indexed_candidates": total, "offset": offset, "semantic": true})
+}
+
+func mergePersonGroups(tx *sql.Tx, id, target int64, model string) (err error) {
+
+	if target == id {
+		return bad(400, "Choose a different group")
+	}
+	var targetModel string
+	if err = tx.QueryRow("SELECT model FROM people WHERE id=? AND merged_into IS NULL", target).Scan(&targetModel); errors.Is(err, sql.ErrNoRows) {
+		return bad(404, "Target person not found")
+	} else if err != nil {
+		return err
+	}
+	if model != targetModel {
+		return bad(400, "Groups from different face models cannot be merged")
+	}
+	if err = rememberMerge(tx, id, target); err != nil {
+		return err
+	}
+	// Carry negative matches to the surviving group in either direction.
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO person_dismissals(a,b) SELECT min(?,CASE WHEN a=? THEN b ELSE a END),max(?,CASE WHEN a=? THEN b ELSE a END) FROM person_dismissals WHERE (a=? OR b=?) AND a!=? AND b!=?`, target, id, target, id, id, id, target, target); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM person_dismissals WHERE a=? OR b=?", id, id); err != nil {
+		return err
+	}
+	// Keep source representatives as aliases so future photos match either group.
+	if _, err = tx.Exec("UPDATE faces SET person_id=? WHERE person_id=?", target, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE people SET name='', merged_into=? WHERE id=?", target, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE people SET merged_into=? WHERE merged_into=?", target, id); err != nil {
+		return err
+	}
+	return nil
+}
+
+// All selected groups merge together or none do; history retains each source.
+func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
+	target, err := personID(r)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Sources []int64 `json:"sources"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > 100 {
+		return bad(400, "Select between 1 and 100 groups")
+	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	seen := map[int64]bool{}
+	var previous *mergeSnapshot
+	for _, source := range body.Sources {
+		if source < 1 || source == target || seen[source] {
+			return bad(400, "Choose distinct groups other than the person to keep")
+		}
+		seen[source] = true
+		var model string
+		if err = tx.QueryRowContext(r.Context(), "SELECT model FROM people WHERE id=? AND merged_into IS NULL", source).Scan(&model); errors.Is(err, sql.ErrNoRows) {
+			return bad(404, "A selected group no longer exists; refresh and try again")
+		} else if err != nil {
+			return err
+		}
+		if err = mergePersonGroups(tx, source, target, model); err != nil {
+			return err
+		}
+		var raw string
+		if err = tx.QueryRow("SELECT value FROM ai_settings WHERE key='merge_undo'").Scan(&raw); err != nil {
+			return err
+		}
+		var snapshot mergeSnapshot
+		if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return err
+		}
+		snapshot.Previous = previous
+		previous = &snapshot
+		blob, e := json.Marshal(snapshot)
+		if e != nil {
+			return e
+		}
+		if _, err = tx.Exec("UPDATE ai_settings SET value=? WHERE key='merge_undo'", string(blob)); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"ok": true, "merged": len(body.Sources), "target": target})
 }

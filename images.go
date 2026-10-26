@@ -238,6 +238,18 @@ func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, qualit
 		}
 		return out.Bytes(), nil
 	}
+	// Keep all native codec work in the killable child, never in the HTTP process.
+	if fresh.Format == "JPEG" && l.config.JPEGDecoder != "go" && os.Getenv("HOME_IMAGES_AI_PREVIEW") == "1" {
+		if data, e := nativeJPEGPreview(ctx, f, fresh, width, height, quality, l.config.MaxPixels); e == nil {
+			return data, nil
+		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, err = f.Seek(0, 0); err != nil {
+			return nil, err
+		}
+	}
 	decoded, _, err := image.Decode(f)
 	if err != nil {
 		return nil, bad(422, "Image cannot be decoded")

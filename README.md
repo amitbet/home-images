@@ -67,6 +67,8 @@ Build, then run the installer in an **elevated PowerShell**:
 
 ```powershell
 go build -trimpath -ldflags '-s -w' -o dist/home-images-windows-amd64.exe .
+# Optional Windows x64 JPEG acceleration (requires 7-Zip):
+./scripts/package-turbojpeg.ps1
 .\install-windows.ps1 -Root 'D:\Photos'
 Get-Service HomeImages
 Invoke-RestMethod http://localhost:8372/health
@@ -354,3 +356,26 @@ FFmpeg versions differ across runner images.
 The included test images are synthetic. No personal photos, local index, configuration,
 logs, or credentials belong in the repository. External libraries retain their own
 licenses; FFmpeg is optional and distributed separately.
+
+### Optional native JPEG acceleration
+
+On Windows x64, `scripts/package-turbojpeg.ps1` extracts a SHA-256-pinned official
+libjpeg-turbo 3.2.0 release into `dist/`. Install the executable, `turbojpeg.dll`,
+and `turbojpeg-licenses/` together; `install-windows.ps1` copies them as a unit.
+The accelerated CI artifact includes these files. Other platform builds remain
+standalone and use Go's decoder.
+
+With `"jpeg_decoder": "auto"` (the default), an available DLL enables SIMD JPEG
+decode/encode and reduced-resolution decoding inside isolated preview workers.
+EXIF orientation, final Lanczos resize, face crops and existing caches are preserved.
+Native input/dimension/working-set bounds are checked; unsupported colorspaces,
+codec errors or missing DLLs fall back to Go. A failed native JPEG worker is retried
+once with Go within the original request deadline. Set `"jpeg_decoder": "go"` and
+restart to disable acceleration. `/health` reports `jpeg_decoder` as `turbojpeg` or
+`go`; individual files can still fall back. The HTTP process never decodes through
+the native library.
+
+For native tests, set `HOMEIMAGES_TEST_TURBO_DLL` to the absolute DLL path and
+`HOMEIMAGES_TEST_PREVIEW_EXE` to a freshly built application executable, then run
+`go test ./...`. Tests cover all eight orientations, progressive JPEG, dimensions,
+pixel limits, cancellation, isolated execution and missing/unloadable DLL fallback.

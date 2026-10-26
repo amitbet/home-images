@@ -36,19 +36,87 @@ const text = (tag, value = "", className = "") => {
 };
 const photoViews = () => !["people", "albums"].includes(state.view);
 const normalClick = (e) => !e || (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey);
+// Keep recent thumbnails in this tab as well as the browser's HTTP cache.
+// Bound both memory and work; old pages must not occupy the decoder queue.
+const clientThumbnails = new Map();
+const clientThumbnailBudget = 32 * 1024 * 1024;
+let clientThumbnailBytes = 0, thumbnailQueue = [], thumbnailActive = 0;
+const thumbnailRequests = new Set();
+function resetThumbnailRequests() {
+  thumbnailObserver?.disconnect();
+  thumbnailQueue = [];
+  for (const controller of thumbnailRequests) controller.abort();
+}
+function cacheThumbnail(url, blob) {
+  const old = clientThumbnails.get(url);
+  if (old) { URL.revokeObjectURL(old.src); clientThumbnailBytes -= old.size; }
+  const entry = { src: URL.createObjectURL(blob), size: blob.size, expires: Date.now() + 300000 };
+  clientThumbnails.delete(url);
+  clientThumbnails.set(url, entry);
+  clientThumbnailBytes += entry.size;
+  while (clientThumbnailBytes > clientThumbnailBudget || clientThumbnails.size > 512) {
+    const key = clientThumbnails.keys().next().value;
+    const removed = clientThumbnails.get(key);
+    clientThumbnails.delete(key);
+    clientThumbnailBytes -= removed.size;
+    URL.revokeObjectURL(removed.src);
+  }
+  return entry;
+}
+function requestThumbnail(img) {
+  thumbnailQueue.push({ img, url: img.dataset.preview, generation: state.generation });
+  pumpThumbnails();
+}
+function pumpThumbnails() {
+  while (thumbnailActive < 2 && thumbnailQueue.length) {
+    const job = thumbnailQueue.shift();
+    if (!job.img.isConnected || job.generation !== state.generation) continue;
+    const cached = clientThumbnails.get(job.url);
+    if (cached && cached.expires > Date.now()) {
+      clientThumbnails.delete(job.url);
+      clientThumbnails.set(job.url, cached);
+      job.img.src = cached.src;
+      continue;
+    }
+    const controller = new AbortController();
+    thumbnailRequests.add(controller);
+    thumbnailActive++;
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    fetch(job.url, { signal: controller.signal, cache: "default" })
+      .then(response => {
+        if (!response.ok) throw Error("Thumbnail " + response.status);
+        return response.blob();
+      })
+      .then(blob => {
+        if (controller.signal.aborted || job.generation !== state.generation || !job.img.isConnected) return;
+        job.img.src = cacheThumbnail(job.url, blob).src;
+      })
+      .catch(error => {
+        if (error.name !== "AbortError" && job.generation === state.generation && job.img.isConnected) {
+          job.img.classList.add("unavailable");
+          job.img.alt = "Preview unavailable";
+        }
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        thumbnailRequests.delete(controller);
+        thumbnailActive--;
+        pumpThumbnails();
+      });
+  }
+}
 const thumbnailObserver = typeof IntersectionObserver === "function"
   ? new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.isIntersecting) {
-        const img = entry.target;
-        img.src = img.dataset.preview;
-        thumbnailObserver.unobserve(img);
+        requestThumbnail(entry.target);
+        thumbnailObserver.unobserve(entry.target);
       }
-    }, { rootMargin: "300px" })
+    }, { rootMargin: "150px" })
   : null;
 function previewImage(img, url) {
   img.dataset.preview = url;
   if (thumbnailObserver) thumbnailObserver.observe(img);
-  else img.src = url;
+  else queueMicrotask(() => requestThumbnail(img));
 }
 const fields = {
   directory: "directory",
@@ -263,6 +331,10 @@ async function load() {
   searchController = typeof AbortController === "function" ? new AbortController() : null;
   const signal = searchController?.signal;
   const gen = ++state.generation;
+  resetThumbnailRequests();
+  for (const id of ["gallery", "people", "albums"]) $(id).replaceChildren();
+  state.items = [];
+  $("resultsCount").textContent = "Loading...";
   state.selected.clear();
   selectionBar();
   notice("");
@@ -288,6 +360,8 @@ async function load() {
             limit: 48,
             offset: state.offset,
           }),
+        undefined,
+        signal,
       );
       if (gen !== state.generation) return;
       state.people = result.items;
@@ -442,7 +516,7 @@ function renderPeople() {
     };
     const edit = text(
       "button",
-      p.name ? "Edit name / merge" : "Add a name",
+      "Name / review matches",
       "text-button",
     );
     edit.onclick = () => editPerson(p);
@@ -655,6 +729,41 @@ function selectPerson(p) {
   state.offset = 0;
   load();
 }
+const mergeSelection = new Map();
+function updateMergeSelection() {
+  $("mergeSelectionCount").textContent = mergeSelection.size ? `${mergeSelection.size} groups selected` : "No groups selected";
+  $("mergePerson").disabled = !mergeSelection.size;
+  for (const input of document.querySelectorAll("input[data-merge-group]")) {
+    input.checked = mergeSelection.has(Number(input.dataset.mergeGroup));
+    input.closest(".face-suggestion").classList.toggle("selected", input.checked);
+  }
+}
+function mergeChoice(person) {
+  const label = document.createElement("label");
+  label.className = "merge-choice";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.dataset.mergeGroup = person.id;
+  input.checked = mergeSelection.has(person.id);
+  input.onchange = () => {
+    if (input.checked) mergeSelection.set(person.id, person);
+    else mergeSelection.delete(person.id);
+    updateMergeSelection();
+  };
+  label.append(input, text("span", "Select group"));
+  return label;
+}
+function mergeGroupRow(person) {
+  const row = text("article", "", "face-suggestion");
+  const image = new Image();
+  previewImage(image, person.image_url || `/api/people/${person.id}/image`);
+  image.alt = person.name || `Person ${person.id}`;
+  image.width = image.height = 72; image.loading = "lazy";
+  const info = text("div");
+  info.append(text("strong", image.alt), text("p", `${person.photo_count} photos`));
+  row.append(image, info, mergeChoice(person));
+  return row;
+}
 let mergeGeneration = 0,
   mergeTimer;
 async function mergeOptions() {
@@ -664,27 +773,34 @@ async function mergeOptions() {
       "/api/people?limit=200&q=" + encodeURIComponent($("mergeSearch").value),
     );
     if (gen !== mergeGeneration) return;
-    $("mergeTarget").replaceChildren(new Option("Choose a person…", ""));
-    for (const p of result.items)
-      if (p.id !== state.editing.id)
-        $("mergeTarget").append(
-          new Option(
-            `${p.name || "Person " + p.id} (${p.photo_count} photos)`,
-            p.id,
-          ),
-        );
+    $("mergeTarget").replaceChildren(new Option("Choose a person...", ""));
+    $("mergeResults").replaceChildren();
+    for (const p of result.items) if (p.id !== state.editing.id) {
+      $("mergeTarget").append(new Option(`${p.name || "Person " + p.id} (${p.photo_count} photos)`, p.id));
+      $("mergeResults").append(mergeGroupRow(p));
+    }
+    updateMergeSelection();
   } catch (e) {
     $("editError").textContent = e.message;
   }
 }
 async function editPerson(p) {
   state.editing = p;
+  mergeSelection.clear();
+  updateMergeSelection();
+  $("mergeResults").replaceChildren();
+  $("singleFaceTarget").hidden = !p.face_id;
+  $("faceCorrection").hidden = !p.face_id;
+  $("undoMerge").hidden = true;
+  $("undoNote").hidden = true;
+  loadMergeUndo(p);
   $("personName").value = p.name || "";
   $("editError").textContent = "";
   $("mergeSearch").value = "";
   modal("personEditor");
   $("personName").focus();
   mergeOptions();
+  loadPersonSuggestions(p);
 }
 $("mergeSearch").oninput = () => {
   clearTimeout(mergeTimer);
@@ -703,34 +819,36 @@ $("personForm").onsubmit = async (e) => {
     $("editError").textContent = e.message;
   }
 };
-$("mergePerson").onclick = async () => {
-  const target = Number($("mergeTarget").value);
-  if (!target) {
-    $("editError").textContent = "Choose the group you want to keep.";
-    return;
+$("mergePerson").onclick = () => {
+  if (!mergeSelection.size) return;
+  $("mergeKeepName").textContent = `Keep ${state.editing.name || "Person " + state.editing.id} and add these ${mergeSelection.size} groups:`;
+  $("mergeConfirmGroups").replaceChildren();
+  for (const person of mergeSelection.values()) {
+    const row = mergeGroupRow(person);
+    row.querySelector(".merge-choice").remove();
+    $("mergeConfirmGroups").append(row);
   }
-  if (!confirm("Combine these face groups into the selected person?")) return;
-  $("mergePerson").disabled = true;
-  try {
-    await api("/api/people/" + state.editing.id, { merge_into: target });
-    if (state.person?.id === state.editing.id)
-      state.person = {
-        id: target,
-        name: $("mergeTarget").selectedOptions[0].textContent.replace(
-          / \(.*$/,
-          "",
-        ),
-      };
-    closeModal("personEditor");
-    await load();
-    refreshStatus();
-    toast("Face groups merged");
-  } catch (e) {
-    $("editError").textContent = e.message;
-  } finally {
-    $("mergePerson").disabled = false;
-  }
+  $("mergeConfirmError").textContent = "";
+  modal("mergeConfirm");
 };
+$("cancelMergeConfirm").onclick = () => closeModal("mergeConfirm");
+$("confirmMergeGroups").onclick = async () => {
+  const button = $("confirmMergeGroups");
+  button.disabled = true;
+  $("cancelMergeConfirm").disabled = true;
+  try {
+    const result = await api(`/api/people/${state.editing.id}/merge-many`, { sources: [...mergeSelection.keys()] });
+    if (state.person && mergeSelection.has(state.person.id)) state.person = { ...state.editing };
+    closeModal("mergeConfirm");
+    closeModal("personEditor");
+    await load(); refreshStatus();
+    toast(`${result.merged} groups merged`);
+  } catch (e) { $("mergeConfirmError").textContent = e.message; }
+  finally { button.disabled = false; $("cancelMergeConfirm").disabled = false; }
+};
+$("mergeConfirm").addEventListener("cancel", e => {
+  if ($("confirmMergeGroups").disabled) e.preventDefault();
+});
 $("cancelPerson").onclick = () => closeModal("personEditor");
 async function refreshStatus() {
   try {
@@ -847,6 +965,73 @@ function renderPhotoAlbums(a) {
     $("photoAlbums").append(b);
   }
 }
+const viewerURL = (photo) => photo.image_url + "?width=1920&height=1440";
+let viewerRequest = null, nextPreview = null, playbackPrefetch = null;
+function playbackQuery(previous) {
+  const p = params();
+  p.set("order", state.shuffle ? "random" : "sequential");
+  if (previous) p.set("after", previous.id);
+  return "/api/playback/next?" + p;
+}
+function clearViewerPreview() {
+  for (const image of [viewerRequest, nextPreview]) {
+    if (image) { image.onload = image.onerror = null; image.removeAttribute("src"); }
+  }
+  viewerRequest = nextPreview = null;
+  playbackPrefetch = null;
+}
+function preloadNext(photo, gen, external) {
+  if (gen !== state.viewerGeneration || !$("viewer").open) return;
+  const warm = (next) => {
+    if (!next || next.id === photo.id || gen !== state.viewerGeneration) return;
+    nextPreview = new Image();
+    nextPreview.fetchPriority = "low";
+    nextPreview.src = viewerURL(next);
+  };
+  if (external) {
+    const url = playbackQuery(photo);
+    const promise = api(url).catch(() => null);
+    playbackPrefetch = { url, promise };
+    promise.then(warm);
+  } else {
+    const index = state.shuffle && state.shuffleStarted
+      ? state.bag[state.bag.length - 1] : state.index + 1;
+    warm(state.items[index]);
+  }
+}
+function showViewerPreview(photo, gen, external) {
+  const preloaded = nextPreview?.src === new URL(viewerURL(photo), location.href).href ? nextPreview : null;
+  if (preloaded) nextPreview = null;
+  clearViewerPreview();
+  const display = $("fullImage");
+  display.classList.add("loading");
+  // Browsers may retain the previous decoded bitmap until a new src loads.
+  display.style.visibility = "hidden";
+  display.removeAttribute("src");
+  display.onload = () => {
+    if (gen === state.viewerGeneration) display.style.visibility = "visible";
+  };
+  display.onerror = () => {
+    if (gen === state.viewerGeneration) display.style.visibility = "hidden";
+  };
+  display.src = "/api/images/" + photo.id + "/thumbnail";
+  const full = preloaded || new Image();
+  viewerRequest = full;
+  full.fetchPriority = "high";
+  full.onload = () => {
+    if (gen !== state.viewerGeneration) return;
+    display.src = full.src;
+    display.classList.remove("loading");
+    preloadNext(photo, gen, external);
+  };
+  full.onerror = () => {
+    if (gen !== state.viewerGeneration) return;
+    display.classList.remove("loading");
+    toast("Full preview unavailable. Showing thumbnail; try the original.");
+  };
+  if (preloaded && full.complete && full.naturalWidth) queueMicrotask(() => full.onload?.());
+  else if (!preloaded) full.src = viewerURL(photo);
+}
 async function openImage(i, external = null) {
   if (!state.items.length && !external) return;
   state.playbackPhoto = external;
@@ -855,13 +1040,7 @@ async function openImage(i, external = null) {
   const photo = currentPhoto();
   const a = state.annotations[photo.id] || {};
   $("fullImage").alt = a.title || photo.filename;
-  $("fullImage").classList.add("loading");
-  $("fullImage").onload = () => $("fullImage").classList.remove("loading");
-  $("fullImage").onerror = () => {
-    $("fullImage").classList.remove("loading");
-    toast("This preview could not be loaded. Try the original.");
-  };
-  $("fullImage").src = photo.image_url + "?width=1920&height=1440";
+  showViewerPreview(photo, gen, external);
   $("imageName").textContent = a.title || photo.filename;
   $("imageMeta").textContent = [
     date(photo),
@@ -905,7 +1084,7 @@ async function loadImageFaces(photo, gen) {
       b.onclick = () => {
         stopPlay();
         closeModal("viewer");
-        editPerson({ id: f.person_id, name: f.name });
+        editPerson({ id: f.person_id, name: f.name, face_id: f.id });
       };
       $("imagePeople").append(b);
     }
@@ -1007,6 +1186,11 @@ async function advance(direction, auto = false) {
 }
 $("viewer").addEventListener("close", () => {
   state.viewerGeneration++;
+  clearViewerPreview();
+  const display = $("fullImage");
+  display.onload = display.onerror = null;
+  display.style.visibility = "hidden";
+  display.removeAttribute("src");
   state.playbackPhoto = null;
   state.playbackHistory = [];
   facesController?.abort();
@@ -1326,10 +1510,9 @@ async function playbackStep() {
   $("viewerPosition").textContent = "Loading next photo…";
   try {
     const previous = currentPhoto();
-    const p = params();
-    p.set("order", state.shuffle ? "random" : "sequential");
-    if (previous) p.set("after", previous.id);
-    const next = await api("/api/playback/next?" + p, undefined, controller?.signal);
+    const url = playbackQuery(previous);
+    const prefetched = playbackPrefetch?.url === url ? await playbackPrefetch.promise : null;
+    const next = prefetched || await api(url, undefined, controller?.signal);
     if (!$("viewer").open || viewerGeneration !== state.viewerGeneration)
       return;
     if (previous) {
@@ -1385,3 +1568,78 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.playing)
     acquireWakeLock();
 });
+
+async function loadPersonSuggestions(person) {
+  $("reviewPortrait").src = person.image_url || `/api/people/${person.id}/image`;
+  const container = $("personSuggestions");
+  container.textContent = "Looking for similar groups?";
+  try {
+    const result = await api(`/api/people/${person.id}/suggestions`);
+    if (state.editing.id !== person.id) return;
+    container.replaceChildren();
+    if (!result.items.length) container.textContent = "No suggested matches yet. You can still search for a group below.";
+    for (const candidate of result.items) {
+      const row = text("article", "", "face-suggestion");
+      const image = document.createElement("img");
+      previewImage(image, candidate.image_url); image.alt = candidate.name || `Person ${candidate.id}`;
+      image.width = image.height = 72; image.loading = "lazy";
+      const info = document.createElement("div");
+      const link = text("a", candidate.name || `Person ${candidate.id}`);
+      link.href = `/?person=${candidate.id}`; link.target = "_blank"; link.rel = "noopener";
+      info.append(link, text("p", `${candidate.photo_count} photos`));
+      const choose = mergeChoice(candidate);
+      const dismiss = text("button", "Not the same person", "text-button");
+      dismiss.onclick = async () => {
+        dismiss.disabled = true;
+        try { await api(`/api/people/${person.id}/dismiss`, {other:candidate.id}); mergeSelection.delete(candidate.id); row.remove(); updateMergeSelection();
+          if (!container.children.length) container.textContent = "No more suggested matches.";
+          loadMergeUndo(person);
+        } catch(e) { $("editError").textContent=e.message; dismiss.disabled=false; }
+      };
+      row.append(image, info, choose, dismiss); container.append(row);
+      updateMergeSelection();
+    }
+  } catch(e) { if (state.editing.id === person.id) container.textContent=e.message; }
+}
+
+function confirmPersonAction(message) {
+  return new Promise(resolve => {
+    const dialog = $("personActionConfirm");
+    $("personActionMessage").textContent = message;
+    let accepted = false;
+    $("personActionOK").onclick = () => { accepted = true; closeModal("personActionConfirm"); };
+    $("personActionCancel").onclick = () => closeModal("personActionConfirm");
+    dialog.addEventListener("close", () => resolve(accepted), { once: true });
+    modal("personActionConfirm");
+  });
+}
+let pendingMergeUndo;
+async function loadMergeUndo(person) {
+  try {
+    const history = await api("/api/people/merge-history");
+    if (state.editing.id !== person.id) return;
+    pendingMergeUndo = history;
+    $("undoMerge").hidden = !history.available;
+    $("undoNote").hidden = !history.available;
+  } catch(e) { $("editError").textContent=e.message; }
+}
+$("undoMerge").onclick = async () => {
+  if (!pendingMergeUndo?.available || !await confirmPersonAction("Undo the latest merge and restore its original face groups?")) return;
+  $("undoMerge").disabled=true;
+  try {
+    await api("/api/people/undo", {source:pendingMergeUndo.source,target:pendingMergeUndo.target});
+    closeModal("personEditor"); await load(); refreshStatus(); toast("Merge undone");
+  } catch(e) { $("editError").textContent=e.message; }
+  finally { $("undoMerge").disabled=false; }
+};
+$("moveFace").onclick = async () => {
+  const target=Number($("mergeTarget").value);
+  if (!target) { $("editError").textContent="Choose the correct person below first.";return; }
+  if (!await confirmPersonAction("Move only this face into the selected person?")) return;
+  $("moveFace").disabled=true;
+  try {
+    await api(`/api/faces/${state.editing.face_id}`, {person:target});
+    closeModal("personEditor"); await load(); refreshStatus(); toast("Face moved");
+  } catch(e) { $("editError").textContent=e.message; }
+  finally { $("moveFace").disabled=false; }
+};

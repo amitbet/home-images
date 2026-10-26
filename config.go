@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	JPEGDecoder  string   `json:"jpeg_decoder,omitempty"`
 	Root         string   `json:"root"`
 	DataDir      string   `json:"data_dir"`
 	Host         string   `json:"host"`
@@ -64,6 +65,12 @@ func loadConfig(path string) (Config, error) {
 	if c.Host != "" && net.ParseIP(c.Host) == nil && c.Host != "localhost" {
 		return c, fmt.Errorf("host must be an IP address or localhost")
 	}
+	if c.JPEGDecoder == "" {
+		c.JPEGDecoder = "auto"
+	}
+	if c.JPEGDecoder != "auto" && c.JPEGDecoder != "go" {
+		return c, fmt.Errorf("jpeg_decoder must be auto or go")
+	}
 	c.ML.defaults()
 	if c.ML.URL != "" {
 		u, e := url.Parse(c.ML.URL)
@@ -78,4 +85,11 @@ func loadConfig(path string) (Config, error) {
 		return c, fmt.Errorf("ml.face_similarity must be between 0.1 and 0.99")
 	}
 	return c, nil
+}
+
+func jpegDecoderName(c Config) string {
+	if c.JPEGDecoder == "go" {
+		return "go"
+	}
+	return nativeJPEGName()
 }
