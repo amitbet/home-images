@@ -45,6 +45,8 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
+	faceCrop *faceCrop // immutable, set only in an isolated preview worker
+
 	config           Config
 	rootPath         string
 	root             *os.Root
@@ -181,6 +183,9 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	peopleDone := make(chan struct{})
+	go func() { defer close(peopleDone); l.warmPeopleThumbnails(ctx) }()
+	defer func() { <-peopleDone }()
 	geoDone := make(chan struct{})
 	go func() { defer close(geoDone); l.geocode(ctx) }()
 	defer func() { <-geoDone }()

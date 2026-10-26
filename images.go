@@ -236,11 +236,25 @@ func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, qualit
 		if e = cmd.Run(); e != nil {
 			return nil, bad(422, "FFmpeg could not decode this HEIC image")
 		}
+		if l.faceCrop != nil {
+			img, e := jpeg.Decode(bytes.NewReader(out.Bytes()))
+			if e != nil {
+				return nil, e
+			}
+			img, e = cropFace(img, l.faceCrop)
+			if e != nil {
+				return nil, e
+			}
+			out.Reset()
+			if e = jpeg.Encode(&out, img, &jpeg.Options{Quality: quality}); e != nil {
+				return nil, e
+			}
+		}
 		return out.Bytes(), nil
 	}
 	// Keep all native codec work in the killable child, never in the HTTP process.
 	if fresh.Format == "JPEG" && l.config.JPEGDecoder != "go" && os.Getenv("HOME_IMAGES_AI_PREVIEW") == "1" {
-		if data, e := nativeJPEGPreview(ctx, f, fresh, width, height, quality, l.config.MaxPixels); e == nil {
+		if data, e := nativeJPEGPreview(ctx, f, fresh, width, height, quality, l.config.MaxPixels, l.faceCrop); e == nil {
 			return data, nil
 		}
 		if err = ctx.Err(); err != nil {
@@ -255,7 +269,14 @@ func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, qualit
 		return nil, bad(422, "Image cannot be decoded")
 	}
 	decoded = orient(decoded, fresh.Orientation)
-	decoded = imaging.Fit(decoded, width, height, imaging.Lanczos)
+	if l.faceCrop != nil {
+		decoded, err = cropFace(decoded, l.faceCrop)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		decoded = imaging.Fit(decoded, width, height, imaging.Lanczos)
+	}
 	// JPEG has no alpha channel. Composite transparency over white.
 	opaque := image.NewRGBA(decoded.Bounds())
 	draw.Draw(opaque, opaque.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)

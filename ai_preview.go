@@ -38,28 +38,33 @@ func (l *Library) aiPreview(ctx context.Context, p Photo) ([]byte, error) {
 
 type previewRequest struct {
 	Config
-	Width   int `json:"preview_width"`
-	Height  int `json:"preview_height"`
-	Quality int `json:"preview_quality"`
+	Width    int       `json:"preview_width"`
+	Height   int       `json:"preview_height"`
+	Quality  int       `json:"preview_quality"`
+	FaceCrop *faceCrop `json:"face_crop,omitempty"`
 }
 
-func (l *Library) processPreview(ctx context.Context, p Photo, width, height, quality int) ([]byte, error) {
+func (l *Library) processPreview(ctx context.Context, p Photo, width, height, quality int, crop ...*faceCrop) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 100*time.Second)
 	defer cancel()
-	data, err := l.processPreviewConfig(ctx, p, width, height, quality, l.config)
+	data, err := l.processPreviewConfig(ctx, p, width, height, quality, l.config, crop...)
 	if err != nil && ctx.Err() == nil && l.config.JPEGDecoder != "go" && nativeJPEGName() == "turbojpeg" && (p.Format == "JPEG" || strings.EqualFold(filepath.Ext(p.Path), ".jpg") || strings.EqualFold(filepath.Ext(p.Path), ".jpeg")) {
 		fallback := l.config
 		fallback.JPEGDecoder = "go"
-		return l.processPreviewConfig(ctx, p, width, height, quality, fallback)
+		return l.processPreviewConfig(ctx, p, width, height, quality, fallback, crop...)
 	}
 	return data, err
 }
-func (l *Library) processPreviewConfig(ctx context.Context, p Photo, width, height, quality int, config Config) ([]byte, error) {
+func (l *Library) processPreviewConfig(ctx context.Context, p Photo, width, height, quality int, config Config, crop ...*faceCrop) ([]byte, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(previewRequest{Config: config, Width: width, Height: height, Quality: quality})
+	request := previewRequest{Config: config, Width: width, Height: height, Quality: quality}
+	if len(crop) > 0 {
+		request.FaceCrop = crop[0]
+	}
+	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +114,7 @@ func runAIPreview(path string) error {
 		return err
 	}
 	defer root.Close()
-	l := &Library{config: c, rootPath: rootPath, root: root}
+	l := &Library{config: c, rootPath: rootPath, root: root, faceCrop: request.FaceCrop}
 	ctx, cancel := context.WithTimeout(context.Background(), 95*time.Second)
 	defer cancel()
 	data, err := l.jpeg(ctx, Photo{Path: path}, request.Width, request.Height, request.Quality)

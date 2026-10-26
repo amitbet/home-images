@@ -478,3 +478,10 @@ signature; it updates only derived locations. Manual labels are preserved.
 New and changed images are reverse-geocoded automatically by the background
 worker using the local GeoNames datasets, including after the offline import.
 Photos without GPS or a settlement within 50 km receive an empty result.
+
+People portraits use the isolated preview worker to crop oriented pixels and
+encode the final 160?160 JPEG directly. JPEG originals use TurboJPEG when
+available. New ML results seed face portraits from the existing inference preview;
+a single background worker also warms existing group covers, largest groups
+first, sharing the background decoder and yielding to foreground rendering.
+Cached portraits retain source-signature invalidation and visibility checks.

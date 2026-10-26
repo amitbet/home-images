@@ -64,6 +64,7 @@ func newAI(l *Library) (*AI, error) {
  CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',model TEXT NOT NULL,embedding BLOB NOT NULL,merged_into INTEGER);
  CREATE TABLE IF NOT EXISTS faces(id INTEGER PRIMARY KEY,image_id TEXT NOT NULL,person_id INTEGER NOT NULL,box TEXT NOT NULL,score REAL NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS face_image ON faces(image_id); CREATE INDEX IF NOT EXISTS face_person ON faces(person_id,image_id);
+ CREATE INDEX IF NOT EXISTS face_person_cover ON faces(person_id,score DESC,id);
  CREATE TABLE IF NOT EXISTS face_overrides(image_id TEXT NOT NULL,signature TEXT NOT NULL,model TEXT NOT NULL,box TEXT NOT NULL,person_id INTEGER NOT NULL,PRIMARY KEY(image_id,signature,model,box));
  CREATE TABLE IF NOT EXISTS person_dismissals(a INTEGER NOT NULL,b INTEGER NOT NULL,PRIMARY KEY(a,b));
  CREATE TABLE IF NOT EXISTS ai_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
@@ -242,6 +243,10 @@ func (a *AI) Run(ctx context.Context) {
 				if err != nil {
 					a.recordFailure(ctx, result.job, err)
 				} else {
+					var photo Photo
+					if json.Unmarshal([]byte(result.job.Metadata), &photo) == nil {
+						a.lib.seedFaceThumbnails(ctx, photo, result.preview, result.prediction, result.job.Signature)
+					}
 					a.pipeline.completed.Add(1)
 					a.mu.Lock()
 					a.online = true

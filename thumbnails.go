@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"io/fs"
 	"log"
@@ -190,37 +189,39 @@ func (l *Library) thumbnail(w http.ResponseWriter, r *http.Request) error {
 	return l.render(w, clone)
 }
 
-func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width, height int) ([]byte, error) {
+func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width, height int, background ...bool) ([]byte, error) {
 	key, err := l.previewKey(p, fmt.Sprintf("face:%s:%d:%d:160", box, width, height))
 	if err != nil {
 		return nil, err
 	}
+	var b faceBox
+	if err = json.Unmarshal([]byte(box), &b); err != nil {
+		return nil, err
+	}
+	crop := &faceCrop{Box: b, Width: width, Height: height}
 	build := func() ([]byte, error) {
-		data, err := l.jpeg(ctx, p, 1280, 1280, 80)
-		if err != nil {
-			return nil, err
+		if l.isolateRendering {
+			if len(background) > 0 && background[0] {
+				select {
+				case l.previewDecoder <- struct{}{}:
+					defer func() { <-l.previewDecoder }()
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				return l.processPreview(ctx, p, 1280, 1280, 80, crop)
+			}
+			l.lastRender.Store(time.Now().UnixNano())
+			defer func() { l.lastRender.Store(time.Now().UnixNano()) }()
+			select {
+			case l.renderSlots <- struct{}{}:
+				defer func() { <-l.renderSlots }()
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return l.processPreview(ctx, p, 1280, 1280, 80, crop)
 		}
-		img, err := jpeg.Decode(bytes.NewReader(data))
-		if err != nil {
-			return nil, err
-		}
-		var b faceBox
-		if err = json.Unmarshal([]byte(box), &b); err != nil {
-			return nil, err
-		}
-		if width < 1 || height < 1 {
-			return nil, bad(422, "Invalid face dimensions")
-		}
-		sx, sy := float64(img.Bounds().Dx())/float64(width), float64(img.Bounds().Dy())/float64(height)
-		padding := int(float64(b.X2-b.X1) * sx * .22)
-		rect := image.Rect(int(float64(b.X1)*sx)-padding, int(float64(b.Y1)*sy)-padding, int(float64(b.X2)*sx)+padding, int(float64(b.Y2)*sy)+padding).Intersect(img.Bounds())
-		if rect.Empty() {
-			return nil, bad(422, "Face is outside the image")
-		}
-		thumb := imaging.Fill(imaging.Crop(img, rect), 160, 160, imaging.Center, imaging.Linear)
-		var out bytes.Buffer
-		err = jpeg.Encode(&out, thumb, &jpeg.Options{Quality: 80})
-		return out.Bytes(), err
+		worker := &Library{config: l.config, root: l.root, rootPath: l.rootPath, faceCrop: crop}
+		return worker.renderJPEG(ctx, p, 1280, 1280, 80)
 	}
 	if l.thumbnails == nil {
 		return build()

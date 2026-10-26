@@ -12,6 +12,7 @@ type preparedAIJob struct {
 	err     error
 }
 type aiPipelineResult struct {
+	preview        []byte
 	job            aiJob
 	prediction     mlPrediction
 	err            error
@@ -55,7 +56,7 @@ func runAIPipeline(ctx context.Context, jobs []aiJob, workers int,
 				if ctx.Err() != nil {
 					return
 				}
-				result := aiPipelineResult{job: work.job, err: work.err}
+				result := aiPipelineResult{job: work.job, err: work.err, preview: work.preview}
 				if work.err == nil {
 					result.prediction, result.err = predict(ctx, work.preview)
 					result.inferenceError = result.err != nil

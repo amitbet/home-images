@@ -117,11 +117,14 @@ func TestNativeJPEGWorkerFallback(t *testing.T) {
 		}
 	}
 	root, _ := filepath.Abs("testdata")
-	run := func(decoder, photo string) []byte {
+	run := func(decoder, photo string, crop ...*faceCrop) []byte {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		req := previewRequest{Config: Config{Root: root, MaxPixels: 80_000_000, JPEGDecoder: decoder}, Width: 480, Height: 360, Quality: 85}
+		if len(crop) > 0 {
+			req.FaceCrop = crop[0]
+		}
 		data, _ := json.Marshal(req)
 		cmd := exec.CommandContext(ctx, app, "--ai-preview", photo)
 		cmd.Stdin = bytes.NewReader(data)
@@ -143,6 +146,26 @@ func TestNativeJPEGWorkerFallback(t *testing.T) {
 	f.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+	crop := &faceCrop{Box: faceBox{X1: 0, Y1: 0, X2: 50, Y2: 100}, Width: 100, Height: 100}
+	f, err = os.Open(filepath.Join(root, "orientation6.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	faceExpected, err := lib.preview(context.Background(), f, Photo{Orientation: 6}, 480, 360, 85, 80_000_000, crop)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	faceNative := run("auto", "orientation6.jpg", crop)
+	if !bytes.Equal(faceExpected, faceNative) {
+		t.Fatal("worker did not use native face crop")
+	}
+	for _, data := range [][]byte{faceNative, run("go", "orientation6.jpg", crop)} {
+		cfg, e := jpeg.DecodeConfig(bytes.NewReader(data))
+		if e != nil || cfg.Width != 160 || cfg.Height != 160 {
+			t.Fatal("invalid worker face crop", cfg, e)
+		}
 	}
 	if !bytes.Equal(expected, accelerated) {
 		t.Fatal("worker did not use native codec")

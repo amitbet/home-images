@@ -63,12 +63,12 @@ func nativeJPEGName() string {
 	}
 	return "go"
 }
-func nativeJPEGPreview(ctx context.Context, f *os.File, p Photo, width, height, quality int, maxPixels int64) ([]byte, error) {
+func nativeJPEGPreview(ctx context.Context, f *os.File, p Photo, width, height, quality int, maxPixels int64, crop ...*faceCrop) ([]byte, error) {
 	lib := defaultTurboJPEG()
 	if lib == nil {
 		return nil, fmt.Errorf("TurboJPEG unavailable")
 	}
-	return lib.preview(ctx, f, p, width, height, quality, maxPixels)
+	return lib.preview(ctx, f, p, width, height, quality, maxPixels, crop...)
 }
 
 // Keep pointer arguments alive and off movable goroutine stacks across the
@@ -78,7 +78,7 @@ func (lib *turboJPEG) call(name string, args ...uintptr) uintptr {
 	value, _, _ := lib.proc[name].Call(args...)
 	return value
 }
-func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, height, quality int, maxPixels int64) ([]byte, error) {
+func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, height, quality int, maxPixels int64, crop ...*faceCrop) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -170,7 +170,15 @@ func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, h
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	resized := imaging.Fit(orient(decoded, p.Orientation), width, height, imaging.Lanczos)
+	var resized image.Image
+	if len(crop) > 0 && crop[0] != nil {
+		resized, err = cropFace(orient(decoded, p.Orientation), crop[0])
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		resized = imaging.Fit(orient(decoded, p.Orientation), width, height, imaging.Lanczos)
+	}
 	rgba := image.NewRGBA(resized.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), resized, resized.Bounds().Min, draw.Src)
 	compressor := lib.call("tjInitCompress")
