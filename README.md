@@ -45,8 +45,8 @@ Configuration:
 
 On Windows, use JSON paths such as `"D:\\Photos"` and `"C:\\ProgramData\\HomeImages"`.
 `ffmpeg` can be an absolute executable path. Leave it empty to disable external HEIC
-decoding. HEIC metadata extraction is in Go, but files missing EXIF dimensions also
-need the `ffprobe` executable alongside FFmpeg to determine dimensions.
+decoding. HEIC metadata and primary image dimensions are extracted in Go; unusual
+containers that cannot be parsed may need `ffprobe` alongside FFmpeg as a fallback.
 
 The server scans at startup and every `scan_interval_seconds` (minimum 30). It serves
 results while indexing, skips unreadable/corrupt/oversized images, and logs errors.

@@ -71,6 +71,17 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 	}
 	// Metadata is optional. Missing/broken EXIF does not exclude an otherwise decodable photo.
 	ex, _ := imagemeta.Decode(f)
+	var raw *rawexif.Exif
+	if isHEIC(relative) {
+		if payload, e := heifExif(f); e == nil {
+			// HEIF stores its EXIF in a separate item, rather than a JPEG APP1 segment.
+			tiffData := bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))
+			if parsed, e := imagemeta.Decode(bytes.NewReader(tiffData)); e == nil {
+				ex = parsed
+			}
+			raw, _ = rawexif.Decode(bytes.NewReader(payload))
+		}
+	}
 	p.Exif = asMap(ex.IFD0)
 	p.Exif["Photo"] = asMap(ex.ExifIFD)
 	p.Exif["GPS"] = asMap(ex.GPS)
@@ -78,10 +89,13 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 	p.Exif["Orientation"] = p.Orientation
 	// Preserve original tag spellings/strings rather than camera-make normalization.
 	// imagemeta additionally supplies HEIF metadata and normalized GPS coordinates.
-	if _, e := f.Seek(0, io.SeekStart); e == nil {
-		if raw, e := rawexif.Decode(f); e == nil {
-			_ = raw.Walk(rawTags(p.Exif))
+	if raw == nil {
+		if _, e := f.Seek(0, io.SeekStart); e == nil {
+			raw, _ = rawexif.Decode(f)
 		}
+	}
+	if raw != nil {
+		_ = raw.Walk(rawTags(p.Exif))
 	}
 	if !ex.ExifIFD.DateTimeOriginal.IsZero() {
 		taken := ex.ExifIFD.DateTimeOriginal.Format("2006:01:02 15:04:05")
@@ -95,11 +109,17 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 		return p, err
 	}
 	c, format, decodeErr := image.DecodeConfig(f)
+	heifContainerDimensions := false
 	if decodeErr == nil {
 		p.Width, p.Height, p.Format = c.Width, c.Height, strings.ToUpper(format)
 	} else if isHEIC(relative) {
 		p.Format = "HEIF"
-		p.Width, p.Height = int(ex.IFD0.ImageWidth), int(ex.IFD0.ImageHeight)
+		if w, h, e := heifDimensions(f); e == nil {
+			p.Width, p.Height = w, h
+			heifContainerDimensions = true
+		} else {
+			p.Width, p.Height = int(ex.IFD0.ImageWidth), int(ex.IFD0.ImageHeight)
+		}
 		if p.Width == 0 || p.Height == 0 {
 			p.Width, p.Height = int(ex.ExifIFD.PixelXDimension), int(ex.ExifIFD.PixelYDimension)
 		}
@@ -115,7 +135,7 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 	if p.Width <= 0 || p.Height <= 0 || int64(p.Width) > l.config.MaxPixels/int64(p.Height) {
 		return p, fmt.Errorf("image exceeds max_pixels or has invalid dimensions")
 	}
-	if p.Orientation >= 5 && p.Orientation <= 8 {
+	if !heifContainerDimensions && p.Orientation >= 5 && p.Orientation <= 8 {
 		p.Width, p.Height = p.Height, p.Width
 	}
 	return p, nil
