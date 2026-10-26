@@ -97,6 +97,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	if err = ensurePhotoSortIndexes(db); err != nil {
+		l.Close()
+		return nil, err
+	}
 	var previous string
 	err = db.QueryRow("SELECT value FROM settings WHERE key='root'").Scan(&previous)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
