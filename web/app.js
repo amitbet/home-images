@@ -153,55 +153,28 @@ function restoreQuery(query) {
           ? "memories"
           : "photos";
 }
-const viewCopy = {
-  photos: [
-    "A lifetime of little moments.",
-    "Find a familiar face. Rediscover a favorite place.",
-    "All photos",
-  ],
-  favorites: [
-    "The ones you come back to.",
-    "A collection of your favorite moments.",
-    "Favorites",
-  ],
-  people: [
-    "The people in your story.",
-    "Familiar faces, brought together. Give each group a name.",
-    "People",
-  ],
-  albums: [
-    "Every chapter has a home.",
-    "Bring photos together without moving a single file.",
-    "Albums",
-  ],
-  memories: [
-    "A familiar day, another year.",
-    "Photos taken on this date, across the years.",
-    "On this day",
-  ],
-  hidden: [
-    "A little space off-screen.",
-    "Hidden photos stay here, safely out of your slideshow.",
-    "Hidden photos",
-  ],
+const viewTitles = {
+  photos: "All photos",
+  favorites: "Favorites",
+  people: "People",
+  albums: "Albums",
+  memories: "On this day",
+  hidden: "Hidden photos",
 };
 function viewChrome() {
-  const v = viewCopy[state.view] || viewCopy.photos;
   document.querySelectorAll("[data-view]").forEach((e) => {
     e.classList.toggle("active", e.dataset.view === state.view);
     if (e.dataset.view === state.view) e.setAttribute("aria-current", "page");
     else e.removeAttribute("aria-current");
   });
-  $("pageTitle").textContent = v[0];
-  $("pageSubtitle").textContent = v[1];
-  $("resultsTitle").textContent = state.savedName || state.album?.name || v[2];
+  $("resultsTitle").textContent =
+    state.savedName || state.album?.name || viewTitles[state.view] || viewTitles.photos;
   $("query").placeholder =
     state.view === "people"
-      ? "Find a person by name…"
-      : "Try “family at the beach” or “a dog in the garden”…";
+      ? "Search people"
+      : "Search photos";
   $("searchForm").hidden = state.view === "albums";
   $("mode").hidden = state.view === "people";
-  $("suggestions").hidden = !photoViews();
   $("slideshow").hidden = !photoViews();
   $("filtersToggle").hidden = !photoViews();
   $("newAlbum").hidden = state.view !== "albums";
@@ -325,8 +298,8 @@ async function load() {
       $("resultsCount").textContent = number(result.total) + " groups";
       if (!result.items.length)
         empty(
-          "Faces will find their place.",
-          "Face groups appear as photos are indexed. Search names or give an unnamed group a name.",
+          "No people yet",
+          "Face groups appear as photos are indexed.",
         );
     } else {
       const p = params();
@@ -352,20 +325,20 @@ async function load() {
         : number(result.total) + " photos";
       if (result.semantic)
         notice(
-          "Ranked by visual similarity. Content search covers indexed photos and needs the Mac worker for new queries.",
+          "Ranked by visual similarity across indexed photos.",
         );
       if (!result.items.length)
         empty(
           state.view === "favorites"
-            ? "Your favorites start here."
+            ? "No favorites yet"
             : state.view === "hidden"
-              ? "Nothing tucked away."
+              ? "No hidden photos"
               : state.view === "memories"
-                ? "Another day, another memory."
-                : "No photos in this selection.",
+                ? "No photos from this day"
+                : "No photos found",
           state.view === "favorites"
             ? "Tap the heart on a photo to add it here."
-            : "Try another search or filter. People and content results cover photos indexed so far.",
+            : "",
         );
     }
     if (gen === state.generation) pagination();
@@ -540,8 +513,8 @@ function renderAlbums() {
   }
   if (!state.albums.length)
     empty(
-      "Make room for a new chapter.",
-      "Create an album, then add photos from the library or photo details. Your folders stay as they are.",
+      "No albums yet",
+      "Create an album, then add photos from the library or photo details.",
     );
 }
 function selectionBar() {
@@ -631,9 +604,7 @@ async function loadSaved() {
     const result = await api("/api/collections");
     $("savedSelections").replaceChildren();
     if (!result.items.length)
-      $("savedSelections").append(
-        text("p", "Save a search for your frame.", "muted"),
-      );
+      $("savedSelections").append(text("p", "None yet", "muted"));
     for (const c of result.items) {
       const row = text("div", "", "saved-row");
       const b = text("button", c.name, "saved-link");
@@ -765,7 +736,6 @@ async function refreshStatus() {
   try {
     const s = await api("/api/indexing");
     state.status = s;
-    $("libraryCount").textContent = number(s.total) + " memories";
     $("peopleBadge").textContent = number(s.people);
     $("workerDot").classList.toggle("online", s.worker_online && !s.paused);
     $("indexTitle").textContent = !s.enabled
@@ -1127,7 +1097,7 @@ $("detailsForm").onsubmit = async (e) => {
         toast("Hidden from your library and slideshow");
         return;
       }
-      $("detailStatus").textContent = "Saved. Originals are unchanged.";
+      $("detailStatus").textContent = "Saved";
       $("imageName").textContent = a.title || photo.filename;
       renderPhotos();
     }
@@ -1186,14 +1156,6 @@ $("searchForm").onsubmit = (e) => {
   state.savedName = "";
   load();
 };
-for (const b of document.querySelectorAll("[data-query]"))
-  b.onclick = () => {
-    if (!photoViews()) setView("photos");
-    $("query").value = b.dataset.query;
-    $("mode").value = "semantic";
-    state.offset = 0;
-    load();
-  };
 for (const b of document.querySelectorAll("[data-view]"))
   b.onclick = () => setView(b.dataset.view);
 $("clearPerson").onclick = () => {
