@@ -1,0 +1,10 @@
+{
+  "root": "/srv/photos",
+  "data_dir": "/var/lib/home-images",
+  "host": "127.0.0.1",
+  "port": 8372,
+  "scan_interval_seconds": 900,
+  "cors_origins": ["http://dashboard.local"],
+  "ffmpeg": "ffmpeg",
+  "max_pixels": 80000000
+}
