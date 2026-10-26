@@ -470,3 +470,11 @@ Curation titles/descriptions/tags/locations continue to be searched separately;
 semantic object/event search (for example, dogs or birthday scenes) continues to
 use CLIP embeddings in the AI database. Date and size filters/sorts use separate
 columns maintained when metadata changes, without decompressing the catalog.
+
+Offline location packages can be imported with the service stopped:
+`home-images.exe --config config.json --import-locations locations.sqlite3`.
+The import checks the package photo root and matches each image ID and file
+signature; it updates only derived locations. Manual labels are preserved.
+New and changed images are reverse-geocoded automatically by the background
+worker using the local GeoNames datasets, including after the offline import.
+Photos without GPS or a settlement within 50 km receive an empty result.

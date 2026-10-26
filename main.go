@@ -89,6 +89,7 @@ func main() {
 	user := flag.String("user", "", "OS account used when installing the daemon")
 	userService := flag.Bool("user-service", false, "Install a per-user Linux/macOS daemon")
 	showVersion := flag.Bool("version", false, "Print version")
+	importLocations := flag.String("import-locations", "", "Import matching offline location results with the service stopped")
 	importIndex := flag.String("import-python-index", "", "One-time read-only import of a previous Python SQLite index")
 	aiPreview := flag.String("ai-preview", "", "Internal: generate an indexing preview using config on stdin")
 	dbInfo := flag.String("db-info", "", "Inspect catalog schema version without opening the service")
@@ -149,6 +150,19 @@ func main() {
 	c, err := loadConfig(absolute)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *importLocations != "" {
+		l, err := newLibrary(c)
+		if err != nil {
+			log.Fatal(err)
+		}
+		count, err := l.ImportLocations(context.Background(), *importLocations)
+		l.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Imported %d matching location results\n", count)
+		return
 	}
 	if *importIndex != "" {
 		l, err := newLibrary(c)
