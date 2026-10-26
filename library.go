@@ -101,6 +101,16 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	// Cover grouping/autocomplete fields without scanning compressed metadata pages.
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
+		l.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS photo_group_path ON images(directory COLLATE NOCASE,path COLLATE NOCASE,path,id);
+ CREATE INDEX IF NOT EXISTS photo_group_year ON images(coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE,path COLLATE NOCASE,path,id);`); err != nil {
+		l.Close()
+		return nil, err
+	}
 	var previous string
 	err = db.QueryRow("SELECT value FROM settings WHERE key='root'").Scan(&previous)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

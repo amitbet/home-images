@@ -226,8 +226,8 @@ func (l *Library) curationSelection(r *http.Request, clause string, args []any) 
 		if utf8.RuneCountInString(place) > 150 {
 			return "", nil, bad(400, "Place is too long")
 		}
-		clause += ` AND id IN(SELECT image_id FROM curation.annotations WHERE root=? AND location LIKE ? ESCAPE '!')`
-		args = append(args, root, "%"+escapeLike(place)+"%")
+		clause += ` AND id IN(SELECT image_id FROM curation.annotations WHERE root=? AND location LIKE ? ESCAPE '!' UNION SELECT g.image_id FROM locations g JOIN images current ON current.id=g.image_id AND current.signature=g.signature WHERE g.label LIKE ? ESCAPE '!' AND g.image_id NOT IN(SELECT image_id FROM curation.annotations WHERE root=? AND location!=''))`
+		args = append(args, root, "%"+escapeLike(place)+"%", "%"+escapeLike(place)+"%", root)
 	}
 	if tag := q.Get("tag"); tag != "" {
 		clause += ` AND id IN(SELECT c.image_id FROM curation.annotations c,json_each(c.tags) WHERE c.root=? AND json_each.value=? COLLATE NOCASE)`
@@ -378,7 +378,7 @@ func (a *AI) editCollection(w http.ResponseWriter, r *http.Request) error {
 		return bad(400, "Provide a name up to 100 characters")
 	}
 	allowed := map[string]bool{}
-	for _, key := range []string{"q", "mode", "directory", "person", "favorite", "hidden", "album", "from", "to", "place", "tag", "on_this_day"} {
+	for _, key := range []string{"q", "mode", "directory", "person", "favorite", "hidden", "album", "from", "to", "place", "tag", "on_this_day", "group_by", "sort", "direction", "layout"} {
 		allowed[key] = true
 	}
 	for key, val := range body.Query {

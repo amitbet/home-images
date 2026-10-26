@@ -491,3 +491,17 @@ indexing, and requests 1920px for large screens, zoom, or fullscreen. Recent vie
 images also share the bounded client blob cache; navigation aborts obsolete fetches.
 Use +/minus to zoom, the percentage button to reset, and drag to pan while zoomed.
 Fullscreen targets the document rather than the modal dialog.
+
+The grid/list supports `group_by=path|year|people|tag` on `/api/search`.
+Grouping covers the full filtered selection before pagination. People and tag
+memberships can repeat a photo; responses include `unique_total` and membership
+`total`. Unassigned photos appear in explicit fallback groups. Similarity-ranked
+content searches keep their ranking and disable grouping.
+`GET /api/filter-suggestions?kind=tag|place|folder&q=...` supplies up to 30
+literal substring suggestions from visible indexed photos. Place suggestions
+and filtering include local GeoNames labels, with manual location overrides.
+
+People/tag group counts are cached for at most 15 seconds across pages (up to
+eight filter selections); manual edits invalidate them immediately. Page contents
+still apply current visibility and source-signature checks. `refresh=1` rebuilds
+counts. Folder and year grouping use covering indexes and unpack only page metadata.

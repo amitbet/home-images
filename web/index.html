@@ -85,6 +85,9 @@
         </div>
         <div class="toolbar-right">
           <span id="photoDisplayControls">
+            <select id="photoGroup" aria-label="Group photos">
+              <option value="">No grouping</option><option value="path">Group by folder path</option><option value="year">Group by year</option><option value="people">Group by person</option><option value="tag">Group by tag</option>
+            </select>
             <select id="photoSort" aria-label="Sort photos">
               <option value="filename">Filename</option>
               <option value="person">Person name</option>
@@ -119,7 +122,7 @@
         <div class="filter-field folder-field">
           <label for="directory">Folder</label>
           <div class="input-row">
-            <input id="directory" placeholder="All folders" /><button
+            <input id="directory" placeholder="All folders" list="folderSuggestions" autocomplete="off" /><datalist id="folderSuggestions"></datalist><button
               id="browseFolders"
               class="secondary"
             >
@@ -136,11 +139,11 @@
         </div>
         <div class="filter-field">
           <label for="place">Place label</label
-          ><input id="place" placeholder="e.g. Italy" />
+          ><input id="place" placeholder="e.g. Italy" list="placeSuggestions" autocomplete="off" /><datalist id="placeSuggestions"></datalist>
         </div>
         <div class="filter-field">
           <label for="tag">Tag</label
-          ><input id="tag" placeholder="e.g. holiday" />
+          ><input id="tag" placeholder="e.g. holiday" list="tagSuggestions" autocomplete="off" /><datalist id="tagSuggestions"></datalist>
         </div>
         <div class="filter-actions">
           <button id="applyFilters" class="primary">Apply filters</button

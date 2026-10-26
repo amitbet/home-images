@@ -38,6 +38,7 @@ type AI struct {
 	lastSuccess       string
 	online            bool
 	textCache         map[string]vector
+	groupCache        map[string]photoGroupSummary
 	searchSlot        chan struct{}
 	playMu            sync.Mutex
 	playCache         map[string]playSelection

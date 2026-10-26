@@ -455,7 +455,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	offset, err := intParam(r, "offset", 0, 0, 1000)
+	offset, err := intParam(r, "offset", 0, 0, 1_000_000_000)
 	if err != nil {
 		return err
 	}
@@ -470,6 +470,9 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 500 {
 		return bad(400, "Query too long")
 	}
+	if mode == "semantic" && q != "" && offset > 1000 {
+		return bad(422, "Semantic search offset exceeds 1000")
+	}
 	order, sortArgs, err := a.photoOrder(r)
 	if err != nil {
 		return err
@@ -477,6 +480,12 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	clause, args, err := a.playbackFilter(r, mode)
 	if err != nil {
 		return err
+	}
+	if r.URL.Query().Get("group_by") != "" {
+		if mode == "semantic" && q != "" {
+			return bad(400, "Grouping is unavailable for similarity-ranked searches")
+		}
+		return a.groupedSearch(w, r, clause, args, order, sortArgs, limit, offset)
 	}
 	if mode == "metadata" || q == "" {
 		var total int

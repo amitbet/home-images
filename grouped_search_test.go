@@ -1,0 +1,131 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"testing"
+)
+
+func TestGroupedSearchMembershipsAndPagination(t *testing.T) {
+	l, s, _ := fixture(t)
+	a := testJob(t, l, "a.jpg")
+	b := testJob(t, l, "b.jpg")
+	if _, e := l.db.Exec("DELETE FROM images WHERE id NOT IN(?,?)", a.ID, b.ID); e != nil {
+		t.Fatal(e)
+	}
+	l.db.Exec("UPDATE images SET taken_at='2020-01-01' WHERE id=?", a.ID)
+	l.db.Exec("UPDATE images SET taken_at='2021-01-01' WHERE id=?", b.ID)
+	postTest(t, s, "/api/curation/"+a.ID, `{"tags":["Family","Holiday"]}`)
+	postTest(t, s, "/api/curation/"+b.ID, `{"tags":["Family"]}`)
+	pred := syntheticPrediction()
+	other := pred.Faces[0]
+	other.Embedding = json.RawMessage(`"[0,1,0]"`)
+	pred.Faces = append(pred.Faces, other)
+	if e := l.ai.save(context.Background(), a, pred); e != nil {
+		t.Fatal(e)
+	}
+	if e := l.ai.save(context.Background(), b, syntheticPrediction()); e != nil {
+		t.Fatal(e)
+	}
+	type response struct {
+		Items  []groupedPhoto
+		Total  int
+		Unique int `json:"unique_total"`
+	}
+	for _, kind := range []string{"path", "year", "people", "tag"} {
+		var all response
+		if getJSON(t, s, "/api/search?group_by="+kind, &all) != 200 {
+			t.Fatal(kind)
+		}
+		want := 2
+		if kind == "people" || kind == "tag" {
+			want = 3
+		}
+		if all.Total != want || all.Unique != 2 || len(all.Items) != want {
+			t.Fatal(kind, all)
+		}
+		for offset, p := range all.Items {
+			var page response
+			if getJSON(t, s, fmt.Sprintf("/api/search?group_by=%s&limit=1&offset=%d", kind, offset), &page) != 200 || len(page.Items) != 1 || page.Items[0].ID != p.ID || page.Items[0].GroupKey != p.GroupKey {
+				t.Fatal(kind, offset, page)
+			}
+		}
+	}
+	postTest(t, s, "/api/curation/"+b.ID, `{"hidden":true}`)
+	var hidden response
+	getJSON(t, s, "/api/search?group_by=tag", &hidden)
+	if hidden.Total != 2 || hidden.Unique != 1 {
+		t.Fatal("hidden memberships", hidden)
+	}
+	for _, query := range []string{"group_by=invalid", "group_by=year&mode=semantic&q=cat"} {
+		var result map[string]any
+		if getJSON(t, s, "/api/search?"+query, &result) != 400 {
+			t.Fatal(query)
+		}
+	}
+}
+
+func TestFilterAutocompleteAndAutoPlaces(t *testing.T) {
+	l, s, _ := fixture(t)
+	a := testJob(t, l, "a.jpg")
+	b := testJob(t, l, "b.jpg")
+	postTest(t, s, "/api/curation/"+a.ID, `{"tags":["Family","100%"],"location":"Rome"}`)
+	postTest(t, s, "/api/curation/"+b.ID, `{"tags":["Secret"],"hidden":true}`)
+	if _, e := l.db.Exec("INSERT INTO locations VALUES(?,?,?)", a.ID, a.Signature, "Milan, Italy"); e != nil {
+		t.Fatal(e)
+	}
+	c := testJob(t, l, "album_100%/c.jpg")
+	if _, e := l.db.Exec("INSERT INTO locations VALUES(?,?,?)", c.ID, c.Signature, "Florence, Italy"); e != nil {
+		t.Fatal(e)
+	}
+	for _, tc := range []struct{ kind, q, want string }{{"tag", "fam", "Family"}, {"tag", "%", "100%"}, {"folder", "100%", "album_100%"}, {"place", "Flor", "Florence, Italy"}, {"place", "Rom", "Rome"}} {
+		var result struct{ Items []string }
+		if getJSON(t, s, "/api/filter-suggestions?kind="+tc.kind+"&q="+url.QueryEscape(tc.q), &result) != 200 || len(result.Items) != 1 || result.Items[0] != tc.want {
+			t.Fatal(tc, result)
+		}
+	}
+	var suggestions struct{ Items []string }
+	getJSON(t, s, "/api/filter-suggestions?kind=tag&q=Secret", &suggestions)
+	if len(suggestions.Items) != 0 {
+		t.Fatal("hidden tag exposed")
+	}
+	var photos struct {
+		Items []Photo
+		Total int
+	}
+	getJSON(t, s, "/api/search?place=Florence", &photos)
+	if photos.Total != 1 || photos.Items[0].ID != c.ID {
+		t.Fatal("automatic location not searchable", photos)
+	}
+	getJSON(t, s, "/api/search?place=Milan", &photos)
+	if photos.Total != 0 {
+		t.Fatal("manual override ignored", photos)
+	}
+}
+
+func TestGroupedUnassignedPaging(t *testing.T) {
+	l, s, _ := fixture(t)
+	a := testJob(t, l, "a.jpg")
+	if e := l.ai.save(context.Background(), a, syntheticPrediction()); e != nil {
+		t.Fatal(e)
+	}
+	postTest(t, s, "/api/curation/"+a.ID, `{"tags":["Family","Holiday"],"location":"Rome"}`)
+	for _, kind := range []string{"people", "tag"} {
+		var all struct {
+			Items []groupedPhoto
+			Total int
+		}
+		getJSON(t, s, "/api/search?group_by="+kind+"&sort=location", &all)
+		for offset, p := range all.Items {
+			var page struct {
+				Items []groupedPhoto
+				Total int
+			}
+			if getJSON(t, s, fmt.Sprintf("/api/search?group_by=%s&sort=location&limit=1&offset=%d", kind, offset), &page) != 200 || len(page.Items) != 1 || page.Items[0].ID != p.ID || page.Items[0].GroupKey != p.GroupKey || page.Total != all.Total {
+				t.Fatal(kind, offset, page)
+			}
+		}
+	}
+}

@@ -1582,3 +1582,6 @@ dialog::backdrop {
 .viewer.zoomed #fullImage:active {cursor:grabbing;}
 .viewer.zoomed .face-layer {display:none !important;}
 .viewer-controls .viewer-button:disabled {opacity:.45;}
+
+.photo-group-heading {grid-column:1 / -1;margin:1rem 0 .25rem;font-size:1.2rem;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding-bottom:.5rem;}
+.gallery.list-view .photo-group-heading {width:100%;}

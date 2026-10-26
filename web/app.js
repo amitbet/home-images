@@ -182,6 +182,7 @@ function params() {
   });
   for (const [key, id] of Object.entries(fields))
     if ($(id).value.trim()) p.set(key, $(id).value.trim());
+  if ($("photoGroup").value && !($("mode").value === "semantic" && $("query").value.trim())) p.set("group_by", $("photoGroup").value);
   p.set("sort", $("photoSort").value);
   p.set("direction", $("sortDirection").value);
   p.set("layout", state.layout);
@@ -211,6 +212,7 @@ function restoreQuery(query) {
     query instanceof URLSearchParams ? query : new URLSearchParams(query);
   if ([...$("photoSort").options].some(o => o.value === p.get("sort"))) $("photoSort").value = p.get("sort");
   $("sortDirection").value = p.get("direction") === "desc" ? "desc" : "asc";
+  $("photoGroup").value = [...$("photoGroup").options].some(o => o.value === p.get("group_by")) ? p.get("group_by") : "";
   state.layout = p.get("layout") === "list" ? "list" : "grid";
   $("query").value = p.get("q") || "";
   $("mode").value = p.get("mode") === "metadata" ? "metadata" : "semantic";
@@ -252,7 +254,7 @@ function viewChrome() {
   $("mode").hidden = state.view === "people";
   $("photoDisplayControls").hidden = !photoViews();
   const ranked = $("mode").value === "semantic" && !!$("query").value.trim();
-  for (const id of ["photoSort", "sortDirection"]) {
+  for (const id of ["photoGroup", "photoSort", "sortDirection"]) {
     $(id).disabled = ranked;
     $(id).title = ranked ? "Content searches are ranked by visual similarity" : "";
   }
@@ -416,7 +418,7 @@ async function load() {
       if (q) $("resultsTitle").textContent = "Results for “" + q + "”";
       $("resultsCount").textContent = result.semantic
         ? number(result.indexed_candidates) + " indexed candidates"
-        : number(result.total) + " photos";
+        : result.group_by ? `${number(result.unique_total)} photos; ${number(result.total)} group entries` : number(result.total) + " photos";
       if (result.semantic)
         notice(
           "Ranked by visual similarity across indexed photos.",
@@ -458,7 +460,12 @@ function renderPhotos() {
   const gallery = $("gallery");
   thumbnailObserver?.disconnect();
   gallery.replaceChildren();
+  let lastGroup = null;
   for (const [i, photo] of state.items.entries()) {
+    if (photo.group_key !== undefined && photo.group_key !== lastGroup) {
+      gallery.append(text("h2", photo.group_label, "photo-group-heading"));
+      lastGroup = photo.group_key;
+    }
     const a = state.annotations[photo.id] || {};
     const card = text("article", "", "photo-card");
     card.dataset.id = photo.id;
@@ -499,7 +506,10 @@ function renderPhotos() {
       select.checked
         ? state.selected.add(photo.id)
         : state.selected.delete(photo.id);
-      card.classList.toggle("selected", select.checked);
+      for (const sibling of gallery.querySelectorAll(".photo-card")) if (sibling.dataset.id === photo.id) {
+        sibling.classList.toggle("selected", select.checked);
+        sibling.querySelector(".photo-select").checked = select.checked;
+      }
       selectionBar();
     };
     const info = text("div", "", "photo-info");
@@ -2057,7 +2067,7 @@ $("moveFace").onclick = async () => {
   finally { $("moveFace").disabled=false; }
 };
 
-for (const id of ["photoSort", "sortDirection"]) $(id).onchange = () => {
+for (const id of ["photoGroup", "photoSort", "sortDirection"]) $(id).onchange = () => {
   state.offset = 0;
   load();
 };
@@ -2066,3 +2076,22 @@ $("listToggle").onclick = () => {
   viewChrome();
   syncURL();
 };
+
+// Native datalist suggestions preserve free-form filters and keyboard navigation.
+for (const [id, kind, listId] of [["tag","tag","tagSuggestions"],["place","place","placeSuggestions"],["directory","folder","folderSuggestions"]]) {
+  let timer, controller, generation=0;
+  const input=$(id), list=$(listId);
+  const suggest=async()=>{
+    const gen=++generation;
+    controller?.abort();controller=new AbortController();
+    input.setAttribute("aria-busy","true");
+    try {
+      const result=await api("/api/filter-suggestions?"+new URLSearchParams({kind,q:input.value.trim()}),undefined,controller.signal);
+      if(gen!==generation)return;
+      list.replaceChildren(...result.items.map(value=>new Option(value,value)));
+    } catch(error) {if(error.name!=="AbortError" && gen===generation)list.replaceChildren();}
+    finally {if(gen===generation)input.setAttribute("aria-busy","false");}
+  };
+  input.addEventListener("focus",suggest);
+  input.addEventListener("input",()=>{clearTimeout(timer);controller?.abort();++generation;list.replaceChildren();timer=setTimeout(suggest,250);});
+}

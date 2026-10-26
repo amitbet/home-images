@@ -52,6 +52,7 @@ func (l *Library) Handler() http.Handler {
 	mux.Handle("/app/", http.StripPrefix("/app/", webHandler))
 	l.ai.routes(mux, wrap)
 	mux.HandleFunc("/api/directories", wrap(l.directories))
+	mux.HandleFunc("GET /api/filter-suggestions", wrap(l.ai.filterSuggestions))
 	mux.HandleFunc("/api/images", wrap(l.images))
 	mux.HandleFunc("/api/next", wrap(l.next))
 	mux.HandleFunc("/api/images/{id}", wrap(l.imageMetadata))
@@ -173,6 +174,10 @@ func (l *Library) selection(r *http.Request) (string, []any, error) {
 		}
 		clause = "path LIKE ? ESCAPE '!'"
 		args = []any{prefix}
+	}
+	if recursive && directory == "" {
+		clause = "1=1"
+		args = nil
 	}
 	q := r.URL.Query().Get("q")
 	if utf8.RuneCountInString(q) > 500 {
