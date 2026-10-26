@@ -432,11 +432,11 @@ function renderPhotos() {
     info.append(
       text("span", a.title || photo.filename, "photo-name"),
       text("span", date(photo), "photo-date"),
-      text("span", [a.location, photo.directory].filter(Boolean).join(" · "), "photo-details"),
+      text("span", [a.location || a.auto_location, photo.directory].filter(Boolean).join(" · "), "photo-details"),
     );
     card.append(open, heart, select, info);
     thumbnailFaces(card, img);
-    if (a.location) card.append(text("div", a.location, "photo-place"));
+    if (a.location || a.auto_location) card.append(text("div", a.location || a.auto_location, "photo-place"));
     if (a.hidden) card.append(text("span", "Hidden", "hidden-label"));
     gallery.append(card);
   }
@@ -922,7 +922,7 @@ async function openImage(i, external = null) {
   $("imageName").textContent = a.title || photo.filename;
   $("imageMeta").textContent = [
     date(photo),
-    a.location || photo.directory,
+    a.location || a.auto_location || photo.directory,
     `${photo.width} × ${photo.height}`,
   ]
     .filter(Boolean)

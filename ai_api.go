@@ -537,7 +537,7 @@ func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	case "size":
 		expr = "json_extract(i.metadata,'$.size_bytes')"
 	case "location":
-		expr = "(SELECT nullif(location,'') FROM curation.annotations WHERE root=? AND image_id=i.id)"
+		expr = "coalesce((SELECT nullif(location,'') FROM curation.annotations WHERE root=? AND image_id=i.id),(SELECT nullif(label,'') FROM catalog.locations g WHERE g.image_id=i.id AND g.signature=i.signature))"
 		args = []any{a.lib.rootPath}
 	case "person", "people_count":
 		value := "min(nullif(p.name,''))"

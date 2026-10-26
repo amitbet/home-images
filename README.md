@@ -363,3 +363,28 @@ FFmpeg versions differ across runner images.
 The included test images are synthetic. No personal photos, local index, configuration,
 logs, or credentials belong in the repository. External libraries retain their own
 licenses; FFmpeg is optional and distributed separately.
+
+
+## Automatic photo locations
+
+On startup, Home Images downloads `cities500.zip`, `admin1CodesASCII.txt` and
+`countryInfo.txt` from GeoNames into `<data_dir>/geonames` if missing (about 14 MB
+compressed city data plus region/country tables). Subsequent lookups run entirely
+locally: GPS coordinates are never sent to a geocoding API. For offline setup,
+copy these three files from https://download.geonames.org/export/dump/ into that
+folder before starting. Failed downloads retry after ten minutes; browsing and ML
+indexing continue independently.
+
+A background worker backfills all indexed images in bounded batches and catches
+new or changed photos automatically. `index-go.sqlite3` stores disposable,
+signature-validated results in `locations`; originals and manual annotations are
+untouched. `GET /api/curation/{id}` and batch curation responses expose
+`auto_location` separately from the editable `location`. Gallery, viewer and Echo
+captions prefer the manual label, falling back to the automatic label. Location
+sorting uses the same fallback. No GPS or no settlement within 50 km produces an
+empty automatic caption. These are approximate nearest-settlement labels, not
+street addresses or administrative boundary determinations.
+
+Data attribution: [GeoNames](https://www.geonames.org/), licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+The local lookup formats city, region and country names from these source files.
