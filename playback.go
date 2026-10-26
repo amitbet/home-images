@@ -77,7 +77,7 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 		if e != nil || id < 1 {
 			return "", nil, bad(400, "Invalid person")
 		}
-		clause += ` AND EXISTS(SELECT 1 FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.image_id=i.id AND f.person_id=? AND ai.signature=i.signature AND ai.models=? AND ai.error='')`
+		clause += ` AND id IN(SELECT f.image_id FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images current ON current.id=ai.image_id AND current.signature=ai.signature WHERE f.person_id=? AND ai.models=? AND ai.error='')`
 		args = append(args, id, a.models)
 	}
 	return clause, args, nil

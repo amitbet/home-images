@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"net/url"
 	"testing"
 )
@@ -31,5 +33,43 @@ func TestPhotoSortPagination(t *testing.T) {
 		if getJSON(t, s, "/api/search?"+query, &result) != 400 {
 			t.Fatalf("accepted invalid sort %s", query)
 		}
+	}
+}
+
+func TestFilteredPhotoPagination(t *testing.T) {
+	l, s, _ := fixture(t)
+	first := testJob(t, l, "a.jpg")
+	second := testJob(t, l, "b.jpg")
+	for _, j := range []aiJob{first, second} {
+		if err := l.ai.save(context.Background(), j, syntheticPrediction()); err != nil {
+			t.Fatal(err)
+		}
+		if postTest(t, s, "/api/curation/"+j.ID, `{"tags":["Family"]}`) != 200 {
+			t.Fatal("tag")
+		}
+	}
+	var person int64
+	if err := l.ai.read.QueryRow("SELECT person_id FROM faces WHERE image_id=?", first.ID).Scan(&person); err != nil {
+		t.Fatal(err)
+	}
+	for _, filter := range []string{"tag=family", "person=" + fmt.Sprint(person)} {
+		for offset, want := range []string{first.ID, second.ID} {
+			var result struct {
+				Items []Photo
+				Total int
+			}
+			path := "/api/search?sort=filename&limit=1&offset=" + fmt.Sprint(offset) + "&" + filter
+			if getJSON(t, s, path, &result) != 200 || result.Total != 2 || len(result.Items) != 1 || result.Items[0].ID != want {
+				t.Fatal(path, result)
+			}
+		}
+	}
+	l.db.Exec("UPDATE images SET signature='changed' WHERE id=?", first.ID)
+	var result struct {
+		Items []Photo
+		Total int
+	}
+	if getJSON(t, s, "/api/search?person="+fmt.Sprint(person), &result) != 200 || result.Total != 1 || result.Items[0].ID != second.ID {
+		t.Fatal("stale person match", result)
 	}
 }

@@ -355,7 +355,7 @@ func (a *AI) faceTags(r *http.Request, ids []string) (map[string][]faceTag, erro
 	for _, id := range ids {
 		query = append(query, id)
 	}
-	rows, err := a.read.QueryContext(r.Context(), `SELECT f.image_id,f.id,f.person_id,p.name,f.box,f.width,f.height FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND f.image_id IN(?`+strings.Repeat(",?", len(ids)-1)+`) AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`) ORDER BY f.id`, append(query, args...)...)
+	rows, err := a.read.QueryContext(r.Context(), `SELECT f.image_id,f.id,f.person_id,p.name,f.box,f.width,f.height FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND f.image_id IN(?`+strings.Repeat(",?", len(ids)-1)+`) AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) ORDER BY f.id`, append(query, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +483,12 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM catalog.images i WHERE "+clause+" ORDER BY "+order+" LIMIT ? OFFSET ?", append(append(args, sortArgs...), limit, offset)...)
+		// Materialize only the page IDs before unpacking metadata. Otherwise SQLite
+		// can decompress every candidate while building its sort buffer.
+		pageArgs := append(append([]any{}, args...), sortArgs...)
+		pageArgs = append(pageArgs, limit, offset)
+		pageArgs = append(pageArgs, sortArgs...)
+		rows, e := a.read.QueryContext(r.Context(), "WITH page AS MATERIALIZED (SELECT i.id FROM catalog.images i WHERE "+clause+" ORDER BY "+order+" LIMIT ? OFFSET ?) SELECT metadata_json(i.metadata) FROM page JOIN catalog.images i ON i.id=page.id ORDER BY "+order, pageArgs...)
 		if e != nil {
 			return e
 		}
@@ -632,7 +637,7 @@ func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	var args []any
 	switch r.URL.Query().Get("sort") {
 	case "", "filename":
-		expr = "i.path"
+		return "i.path COLLATE NOCASE " + strings.ToUpper(direction) + ",i.path", nil, nil
 	case "taken_at":
 		expr = "nullif(i.taken_at,'')"
 	case "created_at":
