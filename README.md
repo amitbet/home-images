@@ -485,3 +485,9 @@ available. New ML results seed face portraits from the existing inference previe
 a single background worker also warms existing group covers, largest groups
 first, sharing the background decoder and yielding to foreground rendering.
 Cached portraits retain source-signature invalidation and visibility checks.
+
+The image viewer uses a cached 1280px preview on normal screens, shared with ML
+indexing, and requests 1920px for large screens, zoom, or fullscreen. Recent viewer
+images also share the bounded client blob cache; navigation aborts obsolete fetches.
+Use +/minus to zoom, the percentage button to reset, and drag to pan while zoomed.
+Fullscreen targets the document rather than the modal dialog.

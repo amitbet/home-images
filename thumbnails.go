@@ -168,7 +168,7 @@ func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int)
 		}
 		return l.renderJPEG(ctx, p, width, height, quality)
 	}
-	if l.thumbnails == nil || ((width > 640 || height > 640) && !(width == 1920 && height == 1440 && quality == 85)) {
+	if l.thumbnails == nil || ((width > 640 || height > 640) && !((width == 1920 && height == 1440 && quality == 85) || (width == 1280 && height == 1280 && quality == 80))) {
 		return build()
 	}
 	key, err := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", width, height, quality))

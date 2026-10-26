@@ -29,9 +29,13 @@ func (l *Library) aiPreview(ctx context.Context, p Photo) ([]byte, error) {
 		return nil, ctx.Err()
 	}
 	key, _ := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", thumbnailWidth, thumbnailHeight, thumbnailQuality))
+	viewerKey, _ := l.previewKey(p, "image:1280:1280:80")
 	data, err := l.processPreview(ctx, p, 1280, 1280, 80)
 	if err == nil && key != "" {
 		l.seedThumbnail(p, data, key)
+		if current, e := l.previewKey(p, "image:1280:1280:80"); l.thumbnails != nil && e == nil && current == viewerKey {
+			_ = l.thumbnails.store(viewerKey, data)
+		}
 	}
 	return data, err
 }

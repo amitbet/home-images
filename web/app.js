@@ -1039,7 +1039,55 @@ function renderPhotoAlbums(a) {
     $("photoAlbums").append(b);
   }
 }
-const viewerURL = (photo) => photo.image_url + "?width=1920&height=1440";
+const viewerURL = (photo, large = false) => photo.image_url + (large || window.innerWidth > 1600 ? "?width=1920&height=1440" : "?width=1280&height=1280&quality=80");
+let viewerFetch = null;
+let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null;
+function setViewerZoom(value) {
+  viewerZoom = Math.max(1, Math.min(4, value));
+  const image = $("fullImage");
+  const maxX = image.clientWidth * (viewerZoom - 1) / 2;
+  const maxY = image.clientHeight * (viewerZoom - 1) / 2;
+  viewerPanX = Math.max(-maxX, Math.min(maxX, viewerPanX));
+  viewerPanY = Math.max(-maxY, Math.min(maxY, viewerPanY));
+  image.style.transform = `translate(${viewerPanX}px, ${viewerPanY}px) scale(${viewerZoom})`;
+  $("viewer").classList.toggle("zoomed", viewerZoom > 1);
+  $("zoomReset").textContent = `${Math.round(viewerZoom * 100)}%`;
+  $("zoomOut").disabled = viewerZoom <= 1;
+  $("zoomIn").disabled = viewerZoom >= 4;
+}
+$("zoomIn").onclick = () => {setViewerZoom(viewerZoom + .25); upgradeViewerResolution();};
+$("zoomOut").onclick = () => setViewerZoom(viewerZoom - .25);
+$("zoomReset").onclick = () => setViewerZoom(1);
+$("fullImage").draggable = false;
+$("fullImage").addEventListener("pointerdown", e => {
+  if (viewerZoom <= 1 || e.button !== 0) return;
+  viewerDrag = {x:e.clientX, y:e.clientY, panX:viewerPanX, panY:viewerPanY};
+  e.currentTarget.setPointerCapture(e.pointerId);e.preventDefault();
+});
+$("fullImage").addEventListener("pointermove", e => {
+  if (!viewerDrag) return;
+  viewerPanX = viewerDrag.panX + e.clientX - viewerDrag.x;
+  viewerPanY = viewerDrag.panY + e.clientY - viewerDrag.y;
+  setViewerZoom(viewerZoom);
+});
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) $("fullImage").addEventListener(event, () => {viewerDrag=null;});
+function fetchViewerImage(image, url) {
+  viewerFetch?.abort();
+  const controller = new AbortController();viewerFetch=controller;
+  const cached = clientThumbnails.get(url);
+  if (cached && cached.expires > Date.now()) {image.src=cached.src;return;}
+  fetch(url,{signal:controller.signal,priority:"high"}).then(r=>{if(!r.ok)throw Error("Preview "+r.status);return r.blob();}).then(blob=>{
+    if (!controller.signal.aborted) image.src=cacheThumbnail(url,blob).src;
+  }).catch(e=>{if(e.name!=="AbortError")image.onerror?.();});
+}
+function upgradeViewerResolution() {
+  const photo=currentPhoto();if(!photo || !$("viewer").open || $("fullImage").dataset.highResolution===photo.id)return;
+  $("fullImage").dataset.highResolution=photo.id;
+  const generation=state.viewerGeneration, image=new Image();
+  image.onload=()=>{if(generation===state.viewerGeneration){$("fullImage").src=image.src;$("fullImage").classList.remove("loading");}};
+  image.onerror=()=>{if(generation===state.viewerGeneration)delete $("fullImage").dataset.highResolution;};
+  fetchViewerImage(image,viewerURL(photo,true));
+}
 let viewerRequest = null, nextPreview = null, playbackPrefetch = null;
 function playbackQuery(previous) {
   const p = params();
@@ -1048,6 +1096,7 @@ function playbackQuery(previous) {
   return "/api/playback/next?" + p;
 }
 function clearViewerPreview() {
+  viewerFetch?.abort();viewerFetch=null;
   for (const image of [viewerRequest, nextPreview]) {
     if (image) { image.onload = image.onerror = null; image.removeAttribute("src"); }
   }
@@ -1104,7 +1153,7 @@ function showViewerPreview(photo, gen, external) {
     toast("Full preview unavailable. Showing thumbnail; try the original.");
   };
   if (preloaded && full.complete && full.naturalWidth) queueMicrotask(() => full.onload?.());
-  else if (!preloaded) full.src = viewerURL(photo);
+  else if (!preloaded) fetchViewerImage(full, viewerURL(photo));
 }
 async function openImage(i, external = null) {
   if (!state.items.length && !external) return;
@@ -1112,6 +1161,8 @@ async function openImage(i, external = null) {
   if (!external) state.index = (i + state.items.length) % state.items.length;
   const gen = ++state.viewerGeneration;
   const photo = currentPhoto();
+  setViewerZoom(1);
+  delete $("fullImage").dataset.highResolution;
   const a = state.annotations[photo.id] || {};
   $("fullImage").alt = a.title || photo.filename;
   showViewerPreview(photo, gen, external);
@@ -1571,14 +1622,19 @@ $("shuffle").onclick = () => {
   $("shuffle").textContent = state.shuffle ? "Shuffle on" : "Shuffle off";
   $("shuffle").setAttribute("aria-pressed", String(state.shuffle));
 };
+document.addEventListener("fullscreenchange", () => {
+  $("fullscreen").setAttribute("aria-pressed", String(!!document.fullscreenElement));
+  $("fullscreen").setAttribute("aria-label", document.fullscreenElement ? "Exit fullscreen" : "Enter fullscreen");
+  if (document.fullscreenElement && $("viewer").open) upgradeViewerResolution();
+});
 $("fullscreen").onclick = async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
-    else if ($("viewer").requestFullscreen)
-      await $("viewer").requestFullscreen();
-    else toast("Fullscreen is unavailable in this browser");
+    else if (document.documentElement.requestFullscreen)
+      await document.documentElement.requestFullscreen();
+    else toast("Fullscreen unavailable here. Press F11 to enter browser fullscreen.");
   } catch (e) {
-    toast("Fullscreen is unavailable in this browser");
+    toast("Fullscreen unavailable here. Press F11 to enter browser fullscreen.");
   }
 };
 $("slideshow").onclick = () => {

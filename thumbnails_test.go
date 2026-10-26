@@ -293,3 +293,29 @@ func TestCachedThumbnailDoesNotPauseIndexing(t *testing.T) {
 		t.Fatal("cached thumbnail incorrectly paused indexing")
 	}
 }
+
+func TestViewerPreviewVariantCached(t *testing.T) {
+	l, _, _ := fixture(t)
+	ctx := context.Background()
+	j := testJob(t, l, "a.jpg")
+	p, e := l.get(ctx, j.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	data, e := l.jpeg(ctx, p, 1280, 1280, 80)
+	if e != nil {
+		t.Fatal(e)
+	}
+	key, e := l.previewKey(p, "image:1280:1280:80")
+	if e != nil {
+		t.Fatal(e)
+	}
+	cached, ok := l.thumbnails.read(key)
+	if !ok || !bytes.Equal(data, cached) {
+		t.Fatal("viewer preview was not cached")
+	}
+	again, e := l.jpeg(ctx, p, 1280, 1280, 80)
+	if e != nil || !bytes.Equal(data, again) {
+		t.Fatal("viewer cache not reused", e)
+	}
+}

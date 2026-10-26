@@ -1575,3 +1575,10 @@ dialog::backdrop {
 @keyframes loading-spin {to {transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce) {.loading-spinner {animation-duration:2s}}
 #selectAllSuggestions {margin-bottom:.75rem;}
+
+.viewer-stage {overflow:hidden;}
+.viewer-arrow {position:relative;z-index:3;flex-shrink:0;}
+.viewer.zoomed #fullImage {cursor:grab;touch-action:none;}
+.viewer.zoomed #fullImage:active {cursor:grabbing;}
+.viewer.zoomed .face-layer {display:none !important;}
+.viewer-controls .viewer-button:disabled {opacity:.45;}
