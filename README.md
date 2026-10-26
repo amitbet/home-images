@@ -268,6 +268,12 @@ people filters, and ordinary browsing remain usable without the Mac.
   through the UI. Separate people with the same name are still separate groups.
 - `GET /api/people/12/image` serves a face thumbnail.
 - `GET /api/images/IMAGE_ID/faces` returns groups and face boxes for that photo.
+- `POST /api/faces` with `{"ids":["IMAGE_ID", ...]}` (up to 60) returns face boxes keyed by
+  image ID, for tagging thumbnails. Accepts `hidden=only|all` like other reads.
+- `POST /api/faces/FACE_ID` retags one face: `{"name":"Dana"}` moves it to the existing
+  person with that name (case-insensitive) or creates one; `{"person_id":34}` moves it to
+  that group. Returns 409 if the person is already tagged in the photo. Faces indexed from
+  this version on store their embedding, so a corrected face also steers future matches.
 - `GET /api/indexing` reports indexed/pending/failed counts and worker status.
 - `POST /api/indexing/control` accepts `{"action":"pause"}`, `resume`, or `retry`.
 

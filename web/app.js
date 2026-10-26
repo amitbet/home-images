@@ -187,12 +187,15 @@ function viewChrome() {
   $("gallery").hidden = !photoViews();
   $("people").hidden = state.view !== "people";
   $("albums").hidden = state.view !== "albums";
+  personChip();
+  $("hideSelected").textContent =
+    state.view === "hidden" ? "Restore to frame" : "Hide from frame";
+}
+function personChip() {
   $("clearPerson").hidden = !state.person || !photoViews();
   if (state.person)
     $("clearPerson").textContent =
       (state.person.name || "Person " + state.person.id) + " ×";
-  $("hideSelected").textContent =
-    state.view === "hidden" ? "Restore to frame" : "Hide from frame";
 }
 function setView(view) {
   stopPlay();
@@ -318,6 +321,7 @@ async function load() {
       state.semantic = result.semantic;
       state.annotations = annotations;
       renderPhotos();
+      void loadThumbnailFaces(gen);
       const q = $("query").value.trim();
       if (q) $("resultsTitle").textContent = "Results for “" + q + "”";
       $("resultsCount").textContent = result.semantic
@@ -367,6 +371,7 @@ function renderPhotos() {
   for (const [i, photo] of state.items.entries()) {
     const a = state.annotations[photo.id] || {};
     const card = text("article", "", "photo-card");
+    card.dataset.id = photo.id;
     card.classList.toggle("selected", state.selected.has(photo.id));
     const open = text("a", "", "photo-open");
     const photoQuery = params();
@@ -413,6 +418,7 @@ function renderPhotos() {
       text("span", date(photo), "photo-date"),
     );
     card.append(open, heart, select, info);
+    thumbnailFaces(card, img);
     if (a.location) card.append(text("div", a.location, "photo-place"));
     if (a.hidden) card.append(text("span", "Hidden", "hidden-label"));
     gallery.append(card);
@@ -424,6 +430,7 @@ function renderPeople() {
   grid.replaceChildren();
   for (const p of state.people) {
     const card = text("article", "", "person-card");
+    card.dataset.person = p.id;
     const open = text("a", "", "person-open");
     open.href = "/?person=" + p.id;
     const img = new Image();
@@ -449,6 +456,44 @@ function renderPeople() {
     card.append(open, edit);
     grid.append(card);
   }
+}
+// Update one People card in place so renaming keeps the grid and its loaded portraits.
+function updatePersonCard(p) {
+  const card = document.querySelector(`.person-card[data-person="${p.id}"]`);
+  if (!card) return;
+  card.querySelector("h3").textContent = p.name || "Person " + p.id;
+  card.querySelector("p").textContent = number(p.photo_count) + " photos";
+  card.querySelector("img").alt = p.name || "Unnamed group " + p.id;
+  card.querySelector(".text-button").textContent = p.name
+    ? "Edit name / merge"
+    : "Add a name";
+}
+// Photos holding both merged groups count once, so take counts from the server
+// and update the cards that are already shown.
+async function refreshPersonCounts() {
+  if (state.view !== "people") return;
+  try {
+    const result = await api(
+      "/api/people?" +
+        new URLSearchParams({ q: $("query").value.trim(), limit: 48, offset: state.offset }),
+    );
+    for (const fresh of result.items) {
+      const p = state.people.find((p) => p.id === fresh.id);
+      if (p && p.photo_count !== fresh.photo_count) {
+        p.photo_count = fresh.photo_count;
+        updatePersonCard(p);
+      }
+    }
+  } catch (e) {
+    /* Counts refresh on the next navigation. */
+  }
+}
+function removePersonCard(id) {
+  document.querySelector(`.person-card[data-person="${id}"]`)?.remove();
+  state.people = state.people.filter((p) => p.id !== id);
+  state.total = Math.max(0, state.total - 1);
+  if (state.view === "people")
+    $("resultsCount").textContent = number(state.total) + " groups";
 }
 async function loadAlbums() {
   const result = await api("/api/albums");
@@ -664,6 +709,7 @@ async function mergeOptions() {
       "/api/people?limit=200&q=" + encodeURIComponent($("mergeSearch").value),
     );
     if (gen !== mergeGeneration) return;
+    state.mergeCandidates = result.items;
     $("mergeTarget").replaceChildren(new Option("Choose a person…", ""));
     for (const p of result.items)
       if (p.id !== state.editing.id)
@@ -693,11 +739,10 @@ $("mergeSearch").oninput = () => {
 $("personForm").onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const name = $("personName").value;
+    const name = $("personName").value.trim();
     await api("/api/people/" + state.editing.id, { name });
-    if (state.person?.id === state.editing.id) state.person.name = name;
+    renamePerson(state.editing.id, name);
     closeModal("personEditor");
-    await load();
     toast("Person name saved");
   } catch (e) {
     $("editError").textContent = e.message;
@@ -713,16 +758,11 @@ $("mergePerson").onclick = async () => {
   $("mergePerson").disabled = true;
   try {
     await api("/api/people/" + state.editing.id, { merge_into: target });
-    if (state.person?.id === state.editing.id)
-      state.person = {
-        id: target,
-        name: $("mergeTarget").selectedOptions[0].textContent.replace(
-          / \(.*$/,
-          "",
-        ),
-      };
+    mergePerson(
+      state.editing,
+      state.mergeCandidates.find((p) => p.id === target),
+    );
     closeModal("personEditor");
-    await load();
     refreshStatus();
     toast("Face groups merged");
   } catch (e) {
@@ -883,10 +923,17 @@ async function openImage(i, external = null) {
   history.replaceState(null, "", imageURL.pathname + imageURL.search);
   void loadImageFaces(photo, gen);
 }
+const faceName = (f) => f.name || "Person " + f.person_id;
+let faceSuggestTimer;
+state.faces = [];
+state.faceMap = {};
+state.showFaces = localStorage.getItem("showFaces") !== "false";
 async function loadImageFaces(photo, gen) {
   facesController?.abort();
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   facesController = controller;
+  state.faces = state.faceMap[photo.id] || [];
+  renderFaces();
   try {
     const faces = await api(
       "/api/images/" +
@@ -897,22 +944,282 @@ async function loadImageFaces(photo, gen) {
       controller?.signal,
     );
     if (gen !== state.viewerGeneration) return;
-    const seen = new Set();
-    for (const f of faces) {
-      if (seen.has(f.person_id)) continue;
-      seen.add(f.person_id);
-      const b = text("button", f.name || "Name this face");
-      b.onclick = () => {
-        stopPlay();
-        closeModal("viewer");
-        editPerson({ id: f.person_id, name: f.name });
-      };
-      $("imagePeople").append(b);
+    state.faces = faces;
+    if (photo.id in state.faceMap) {
+      state.faceMap[photo.id] = faces;
+      refreshThumbnailFaces(photo.id);
     }
+    renderFaces();
   } catch (e) {
     /* Photos remain usable while AI is unavailable. */
   }
 }
+// Face tags for the visible page, fetched after the gallery renders.
+async function loadThumbnailFaces(gen) {
+  const ids = state.items.map((p) => p.id);
+  if (!ids.length) return;
+  try {
+    const faces = await api(
+      "/api/faces" + (state.view === "hidden" ? "?hidden=only" : ""),
+      { ids },
+    );
+    if (gen !== state.generation) return;
+    state.faceMap = {};
+    for (const id of ids) state.faceMap[id] = faces[id] || [];
+    refreshThumbnailFaces();
+  } catch (e) {
+    /* Thumbnails remain usable while AI is unavailable. */
+  }
+}
+function refreshThumbnailFaces(only) {
+  for (const card of document.querySelectorAll(".photo-card")) {
+    if (only && card.dataset.id !== only) continue;
+    thumbnailFaces(card, card.querySelector(".photo-open img"));
+  }
+}
+// Place a face box, given in ML preview coordinates, over an image shown in a
+// box of `ratio` (width / height) with object-fit: cover (thumbnails) or contain.
+function faceBox(f, onClick, ratio) {
+  const box = document.createElement("button");
+  box.className = "face-box" + (f.name ? "" : " unnamed");
+  box.type = "button";
+  const r = f.width / f.height;
+  let w = 1,
+    h = 1;
+  if (ratio && r > ratio) w = r / ratio;
+  else if (ratio) h = ratio / r;
+  const x = (1 - w) / 2,
+    y = (1 - h) / 2;
+  box.style.left = (x + (f.box.x1 / f.width) * w) * 100 + "%";
+  box.style.top = (y + (f.box.y1 / f.height) * h) * 100 + "%";
+  box.style.width = ((f.box.x2 - f.box.x1) / f.width) * w * 100 + "%";
+  box.style.height = ((f.box.y2 - f.box.y1) / f.height) * h * 100 + "%";
+  box.setAttribute("aria-label", "Tag " + faceName(f));
+  box.title = faceName(f);
+  box.append(text("span", faceName(f), "face-label"));
+  box.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  };
+  return box;
+}
+function thumbnailFaces(card, img) {
+  card.querySelector(".thumb-faces")?.remove();
+  const faces = state.faceMap[card.dataset.id];
+  if (!faces?.length) return;
+  const layer = text("div", "", "thumb-faces");
+  for (const f of faces)
+    layer.append(faceBox(f, () => editFace(f, img, card.dataset.id), 4 / 3));
+  card.querySelector(".photo-open").after(layer);
+}
+function renderFaces() {
+  const layer = $("faceLayer");
+  layer.replaceChildren();
+  $("imagePeople").replaceChildren();
+  $("toggleFaces").hidden = !state.faces.length;
+  $("toggleFaces").setAttribute("aria-pressed", String(state.showFaces));
+  const photo = currentPhoto();
+  for (const f of state.faces) {
+    const open = () => {
+      stopPlay();
+      editFace(f, $("fullImage"), photo?.id);
+    };
+    const box = faceBox(f, open);
+    const chip = text("button", f.name || "Name this face");
+    chip.onclick = open;
+    for (const e of [box, chip]) {
+      e.onmouseenter = () => {
+        box.classList.add("active");
+        chip.classList.add("active");
+      };
+      e.onmouseleave = () => {
+        box.classList.remove("active");
+        chip.classList.remove("active");
+      };
+    }
+    layer.append(box);
+    $("imagePeople").append(chip);
+  }
+  placeFaceLayer();
+}
+// The image is centered with object-fit: contain, so match its rendered box.
+function placeFaceLayer() {
+  const layer = $("faceLayer"),
+    img = $("fullImage");
+  layer.hidden =
+    !state.showFaces || !state.faces.length || !img.complete || !img.naturalWidth;
+  if (layer.hidden) return;
+  const stage = img.parentElement.getBoundingClientRect(),
+    r = img.getBoundingClientRect();
+  layer.style.left = r.left - stage.left + "px";
+  layer.style.top = r.top - stage.top + "px";
+  layer.style.width = r.width + "px";
+  layer.style.height = r.height + "px";
+}
+$("fullImage").addEventListener("load", placeFaceLayer);
+window.addEventListener("resize", placeFaceLayer);
+if (typeof ResizeObserver === "function")
+  new ResizeObserver(placeFaceLayer).observe($("fullImage"));
+$("toggleFaces").onclick = () => {
+  state.showFaces = !state.showFaces;
+  localStorage.setItem("showFaces", String(state.showFaces));
+  renderFaces();
+};
+// Apply a tag change to every loaded face list, the People grid and open views
+// in place, without reloading the page of results.
+function eachFace(fn) {
+  const lists = [state.faces, ...Object.values(state.faceMap)];
+  for (const list of new Set(lists)) for (const f of list) fn(f);
+}
+function facesChanged() {
+  if ($("viewer").open) renderFaces();
+  refreshThumbnailFaces();
+}
+function renamePerson(id, name) {
+  eachFace((f) => {
+    if (f.person_id === id) f.name = name;
+  });
+  const p = state.people.find((p) => p.id === id);
+  if (p) {
+    p.name = name;
+    updatePersonCard(p);
+  }
+  if (state.person?.id === id) {
+    state.person.name = name;
+    personChip();
+  }
+  facesChanged();
+}
+function mergePerson(source, target) {
+  eachFace((f) => {
+    if (f.person_id === source.id) {
+      f.person_id = target.id;
+      f.name = target.name;
+    }
+  });
+  removePersonCard(source.id);
+  void refreshPersonCounts();
+  if (state.person?.id === source.id) {
+    state.person = { id: target.id, name: target.name };
+    personChip();
+    syncURL();
+  }
+  facesChanged();
+}
+function drawFaceCrop(f, img) {
+  const canvas = $("faceCrop"),
+    ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!img?.naturalWidth) return;
+  const sx = img.naturalWidth / f.width,
+    sy = img.naturalHeight / f.height,
+    w = (f.box.x2 - f.box.x1) * sx,
+    h = (f.box.y2 - f.box.y1) * sy,
+    side = Math.max(w, h) * 1.44,
+    cx = ((f.box.x1 + f.box.x2) / 2) * sx,
+    cy = ((f.box.y1 + f.box.y2) / 2) * sy;
+  ctx.drawImage(img, cx - side / 2, cy - side / 2, side, side, 0, 0, canvas.width, canvas.height);
+}
+async function faceSuggestions() {
+  try {
+    const result = await api(
+      "/api/people?limit=50&q=" + encodeURIComponent($("faceName").value.trim()),
+    );
+    state.faceMatches = result.items.filter((p) => p.name);
+    $("faceSuggestions").replaceChildren(
+      ...state.faceMatches.map((p) => new Option(p.name)),
+    );
+  } catch (e) {
+    state.faceMatches = [];
+  }
+  faceHint();
+}
+// The existing group, other than this face's own, already using the typed name.
+function faceNameOwner() {
+  const name = $("faceName").value.trim().toLowerCase();
+  return (state.faceMatches || []).find(
+    (p) => p.name.toLowerCase() === name && p.id !== state.editingFace.person_id,
+  );
+}
+function faceHint() {
+  const owner = faceNameOwner(),
+    scope = document.querySelector("input[name=faceScope]:checked").value;
+  $("faceHint").textContent = owner
+    ? scope === "group"
+      ? `${owner.name} already exists. Saving merges ${faceName(state.editingFace)} into ${owner.name}.`
+      : `This face moves to ${owner.name}.`
+    : scope === "face" && $("faceName").value.trim()
+      ? "This face starts a new person."
+      : "";
+}
+function editFace(f, img, imageId) {
+  state.editingFace = f;
+  state.editingFaceImage = imageId;
+  state.faceMatches = [];
+  $("faceName").value = f.name || "";
+  $("faceError").textContent = "";
+  $("faceHint").textContent = "";
+  $("faceScopeGroup").textContent = "Every photo of " + faceName(f);
+  document.querySelector("input[name=faceScope][value=group]").checked = true;
+  drawFaceCrop(f, img);
+  modal("faceEditor");
+  $("faceName").focus();
+  $("faceName").select();
+  faceSuggestions();
+}
+$("faceName").oninput = () => {
+  faceHint();
+  clearTimeout(faceSuggestTimer);
+  faceSuggestTimer = setTimeout(faceSuggestions, 200);
+};
+for (const r of document.querySelectorAll("input[name=faceScope]"))
+  r.onchange = faceHint;
+$("cancelFace").onclick = () => closeModal("faceEditor");
+$("faceForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = state.editingFace,
+    name = $("faceName").value.trim(),
+    scope = document.querySelector("input[name=faceScope]:checked").value;
+  const button = e.submitter || $("faceForm").querySelector("[type=submit]");
+  button.disabled = true;
+  try {
+    // Re-check against the server so a stale suggestion list cannot create a duplicate name.
+    await faceSuggestions();
+    const owner = faceNameOwner();
+    let message;
+    if (scope === "face") {
+      if (!name) throw Error("Enter a name for this face.");
+      const moved = await api("/api/faces/" + f.id, { name });
+      eachFace((x) => {
+        if (x.id === f.id) {
+          x.person_id = moved.person_id;
+          x.name = moved.name;
+        }
+      });
+      facesChanged();
+      message = "Face tagged as " + moved.name;
+    } else if (owner) {
+      if (!confirm(`Merge ${faceName(f)} into ${owner.name}? Their photos are combined.`))
+        return;
+      const source = state.people.find((p) => p.id === f.person_id) || { id: f.person_id };
+      await api("/api/people/" + f.person_id, { merge_into: owner.id });
+      mergePerson(source, owner);
+      message = `Merged into ${owner.name}`;
+    } else {
+      await api("/api/people/" + f.person_id, { name });
+      renamePerson(f.person_id, name);
+      message = name ? "Renamed to " + name : "Name cleared";
+    }
+    closeModal("faceEditor");
+    toast(message);
+    refreshStatus();
+  } catch (e) {
+    $("faceError").textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+};
 function stopPlay() {
   clearTimeout(state.playing);
   state.playing = null;
@@ -1218,7 +1525,11 @@ for (const id of ["directory", "place", "tag", "dateFrom", "dateTo"])
     }
   });
 window.addEventListener("keydown", (e) => {
-  if (!$("viewer").open || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))
+  if (
+    !$("viewer").open ||
+    $("faceEditor").open ||
+    /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)
+  )
     return;
   if (e.key === "ArrowRight") {
     e.preventDefault();

@@ -56,6 +56,17 @@ func newAI(l *Library) (*AI, error) {
 	if err != nil {
 		return fail(err)
 	}
+	// Per-face embeddings let a manually retagged face teach recognition.
+	// Faces indexed before this column existed keep NULL.
+	var hasEmbedding int
+	if err = a.db.QueryRow("SELECT count(*) FROM pragma_table_info('faces') WHERE name='embedding'").Scan(&hasEmbedding); err != nil {
+		return fail(err)
+	}
+	if hasEmbedding == 0 {
+		if _, err = a.db.Exec("ALTER TABLE faces ADD COLUMN embedding BLOB"); err != nil {
+			return fail(err)
+		}
+	}
 	var root string
 	err = a.db.QueryRow("SELECT value FROM ai_settings WHERE key='root'").Scan(&root)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -326,7 +337,7 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 		}
 		used[id] = true
 		box, _ := json.Marshal(f.Box)
-		if _, err = tx.ExecContext(ctx, "INSERT INTO faces(image_id,person_id,box,score,width,height) VALUES(?,?,?,?,?,?)", j.ID, id, string(box), f.Score, p.Width, p.Height); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO faces(image_id,person_id,box,score,width,height,embedding) VALUES(?,?,?,?,?,?,?)", j.ID, id, string(box), f.Score, p.Width, p.Height, vectors[i].blob()); err != nil {
 			return err
 		}
 	}

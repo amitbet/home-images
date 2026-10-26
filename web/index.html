@@ -215,7 +215,12 @@
               aria-label="Previous image"
             >
               ‹</button
-            ><img id="fullImage" alt="" /><button
+            ><img id="fullImage" alt="" /><div
+              id="faceLayer"
+              class="face-layer"
+              hidden
+            ></div
+            ><button
               id="nextImage"
               class="viewer-arrow"
               aria-label="Next image"
@@ -230,7 +235,14 @@
               <div id="imagePeople" class="image-people"></div>
             </div>
             <div class="viewer-actions">
-              <button id="viewerFavorite" class="viewer-button">
+              <button
+                id="toggleFaces"
+                class="viewer-button"
+                aria-pressed="true"
+                hidden
+              >
+                Faces</button
+              ><button id="viewerFavorite" class="viewer-button">
                 ♡ Favorite</button
               ><button
                 id="toggleDetails"
@@ -315,6 +327,37 @@
         <option value="">Choose a person…</option></select
       ><button id="mergePerson" class="secondary">Merge groups</button>
       <p id="editError" role="alert"></p>
+    </dialog>
+    <dialog id="faceEditor" class="person-editor">
+      <form id="faceForm">
+        <h2>Tag this face</h2>
+        <canvas id="faceCrop" class="face-crop" width="160" height="160"></canvas>
+        <label for="faceName">Name</label
+        ><input
+          id="faceName"
+          maxlength="100"
+          placeholder="e.g. Dana"
+          autocomplete="off"
+          list="faceSuggestions"
+        /><datalist id="faceSuggestions"></datalist>
+        <fieldset class="face-scope">
+          <legend>Apply to</legend>
+          <label class="check-label"
+            ><input type="radio" name="faceScope" value="group" checked />
+            <span id="faceScopeGroup">Every photo of this person</span></label
+          ><label class="check-label"
+            ><input type="radio" name="faceScope" value="face" /> Only this
+            face (it was grouped with the wrong person)</label
+          >
+        </fieldset>
+        <p id="faceHint"></p>
+        <p id="faceError" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="cancelFace" class="secondary">
+            Cancel</button
+          ><button type="submit" class="primary">Save tag</button>
+        </div>
+      </form>
     </dialog>
     <dialog id="nameDialog" class="person-editor">
       <form id="nameForm">
