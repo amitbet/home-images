@@ -49,7 +49,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	}
 	args := []any{id, a.models, id, id, id}
 	args = append(args, visibilityArgs...)
-	rows, err = a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id) FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND NOT EXISTS(SELECT 1 FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=? AND y.person_id=p.id) AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`) GROUP BY p.id`, args...)
+	rows, err = a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id) FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
 	if err != nil {
 		return err
 	}
