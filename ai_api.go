@@ -469,6 +469,10 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 500 {
 		return bad(400, "Query too long")
 	}
+	order, sortArgs, err := a.photoOrder(r)
+	if err != nil {
+		return err
+	}
 	clause, args, err := a.playbackFilter(r, mode)
 	if err != nil {
 		return err
@@ -478,7 +482,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata FROM catalog.images i WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
+		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM catalog.images i WHERE "+clause+" ORDER BY "+order+" LIMIT ? OFFSET ?", append(append(args, sortArgs...), limit, offset)...)
 		if e != nil {
 			return e
 		}
@@ -612,4 +616,40 @@ func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return writeJSON(w, 200, map[string]any{"ok": true, "merged": len(body.Sources), "target": target})
+}
+
+// Only allow known expressions and directions; unknown values never reach SQL.
+func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
+	direction := r.URL.Query().Get("direction")
+	if direction == "" {
+		direction = "asc"
+	}
+	if direction != "asc" && direction != "desc" {
+		return "", nil, bad(400, "direction must be asc or desc")
+	}
+	var expr string
+	var args []any
+	switch r.URL.Query().Get("sort") {
+	case "", "filename":
+		expr = "i.path"
+	case "taken_at":
+		expr = "nullif(i.taken_at,'')"
+	case "created_at":
+		expr = "i.created_at"
+	case "size":
+		expr = "i.size_bytes"
+	case "location":
+		expr = "coalesce((SELECT nullif(location,'') FROM curation.annotations WHERE root=? AND image_id=i.id),(SELECT nullif(label,'') FROM catalog.locations g WHERE g.image_id=i.id AND g.signature=i.signature))"
+		args = []any{a.lib.rootPath}
+	case "person", "people_count":
+		value := "min(nullif(p.name,''))"
+		if r.URL.Query().Get("sort") == "people_count" {
+			value = "count(DISTINCT p.id)"
+		}
+		expr = "(SELECT " + value + " FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.image_id=i.id AND ai.signature=i.signature AND ai.models=? AND ai.error='')"
+		args = []any{a.models}
+	default:
+		return "", nil, bad(400, "Unknown photo sort")
+	}
+	return expr + " COLLATE NOCASE " + strings.ToUpper(direction) + " NULLS LAST, i.path COLLATE NOCASE, i.path", args, nil
 }

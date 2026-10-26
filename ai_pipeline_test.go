@@ -93,3 +93,13 @@ func TestAIPipelineOutageCancelsRemainingWork(t *testing.T) {
 		t.Fatal("outage did not stop bounded pipeline", err, calls.Load())
 	}
 }
+
+func TestMLIndexIntervalDefaults(t *testing.T) {
+	for _, interval := range []int{0, 100, 2000} {
+		c := MLConfig{IntervalMS: interval}
+		c.defaults()
+		if c.IntervalMS != interval {
+			t.Fatalf("interval %d changed to %d", interval, c.IntervalMS)
+		}
+	}
+}

@@ -133,7 +133,7 @@ func waitContext(ctx context.Context, d time.Duration) bool {
 type aiJob struct{ ID, Signature, Metadata string }
 
 func (a *AI) jobs(ctx context.Context, after string) ([]aiJob, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT i.id,i.signature,i.metadata FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
+	rows, err := a.db.QueryContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
  WHERE i.id>? AND (a.image_id IS NULL OR a.signature!=i.signature OR a.models!=? OR (a.error!='' AND a.retry_at<=?)) ORDER BY i.id LIMIT 32`, after, a.models, time.Now().Unix())
 	if err != nil {
 		return nil, err
@@ -266,6 +266,7 @@ func (a *AI) Run(ctx context.Context) {
 		cursor = jobs[len(jobs)-1].ID
 	}
 }
+
 func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
 	a.setError(e)
 	_, err := a.db.ExecContext(ctx, `INSERT INTO ai_images(image_id,signature,models,error,retry_at) VALUES(?,?,?,?,?) ON CONFLICT(image_id) DO UPDATE SET signature=excluded.signature,models=excluded.models,clip=NULL,error=excluded.error,retry_at=excluded.retry_at`, j.ID, j.Signature, a.models, e.Error(), time.Now().Add(time.Hour).Unix())

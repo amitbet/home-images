@@ -194,3 +194,15 @@ then choose **Review selected groups**. Selections persist across searches. The 
 dialog shows every selected portrait and the person being kept before **Confirm merge**.
 The batch is atomic; undo restores its sources one at a time in reverse order.
 Merge, undo, and face-move confirmations use application dialogs.
+
+
+Photo results offer a Grid/List toggle and ascending/descending sorting by filename,
+person name, distinct people count, location label, time taken, file creation date,
+and file size. Sorting applies to the full filtered selection before pagination;
+missing labels/dates appear last. Person sorting uses the first named person
+alphabetically. Location sorting uses the editable location label. Content queries
+retain visual similarity ranking and disable metadata sort controls. Layout and
+sort choices are retained in the page URL.
+
+`GET /api/search` accepts `sort=filename|person|people_count|location|taken_at|created_at|size`
+and `direction=asc|desc` for metadata results (including an empty content query).

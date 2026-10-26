@@ -35,13 +35,14 @@ func (a *AI) curationRoutes(mux *http.ServeMux, wrap func(endpoint) http.Handler
 }
 
 type annotation struct {
-	Favorite    bool     `json:"favorite"`
-	Hidden      bool     `json:"hidden"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Location    string   `json:"location"`
-	Tags        []string `json:"tags"`
-	Albums      []int64  `json:"albums"`
+	Favorite     bool     `json:"favorite"`
+	Hidden       bool     `json:"hidden"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Location     string   `json:"location"`
+	AutoLocation string   `json:"auto_location"`
+	Tags         []string `json:"tags"`
+	Albums       []int64  `json:"albums"`
 }
 
 func (a *AI) annotation(id string) (annotation, error) {
@@ -49,6 +50,9 @@ func (a *AI) annotation(id string) (annotation, error) {
 	var tags string
 	err := a.read.QueryRow(`SELECT favorite,hidden,title,description,location,tags FROM curation.annotations WHERE root=? AND image_id=?`, a.lib.rootPath, id).Scan(&p.Favorite, &p.Hidden, &p.Title, &p.Description, &p.Location, &tags)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return p, err
+	}
+	if err = a.read.QueryRow(`SELECT g.label FROM catalog.locations g JOIN catalog.images i ON i.id=g.image_id AND i.signature=g.signature WHERE g.image_id=?`, id).Scan(&p.AutoLocation); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, err
 	}
 	if tags != "" {
@@ -197,7 +201,7 @@ func (l *Library) curationSelection(r *http.Request, clause string, args []any) 
 		clause += ` AND id IN(SELECT m.image_id FROM curation.album_images m JOIN curation.albums c ON c.id=m.album_id WHERE c.root=? AND c.id=?)`
 		args = append(args, root, id)
 	}
-	dateExpr := `replace(substr(coalesce(json_extract(metadata,'$.taken_at'),json_extract(metadata,'$.created_at'),''),1,10),':','-')`
+	dateExpr := `replace(substr(coalesce(taken_at,created_at,''),1,10),':','-')`
 	for _, key := range []string{"from", "to"} {
 		if value := q.Get(key); value != "" {
 			if _, err := time.Parse("2006-01-02", value); err != nil {

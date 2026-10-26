@@ -66,6 +66,11 @@ func runAIPipeline(ctx context.Context, jobs []aiJob, workers int,
 				case <-ctx.Done():
 					return
 				}
+				// Wait for the consumer to cancel the batch after an outage;
+				// do not start another request while the error is queued.
+				if result.inferenceError {
+					return
+				}
 			}
 		}()
 	}

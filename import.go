@@ -41,7 +41,7 @@ func (l *Library) ImportPython(ctx context.Context, source string) (int64, error
 	}
 	result, err := l.db.ExecContext(ctx, `INSERT OR IGNORE INTO images(id,path,directory,signature,metadata,search)
 SELECT id,path,directory,'python:'||signature,
-json_set(metadata,'$.id',id,'$.image_url','/api/images/'||id||'/image','$.original_url','/api/images/'||id||'/original'),search
+metadata_pack(json_set(metadata,'$.id',id,'$.image_url','/api/images/'||id||'/image','$.original_url','/api/images/'||id||'/original')),metadata_search(metadata)
 FROM legacy.images AS legacy_row WHERE NOT EXISTS(SELECT 1 FROM main.images AS existing WHERE existing.id=legacy_row.id)`)
 	if err != nil {
 		return 0, err

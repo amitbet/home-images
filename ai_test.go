@@ -27,7 +27,7 @@ func syntheticPrediction() mlPrediction {
 func testJob(t *testing.T, l *Library, path string) aiJob {
 	t.Helper()
 	var j aiJob
-	if err := l.db.QueryRow("SELECT id,signature,metadata FROM images WHERE path=?", path).Scan(&j.ID, &j.Signature, &j.Metadata); err != nil {
+	if err := l.db.QueryRow("SELECT id,signature,metadata_json(metadata) FROM images WHERE path=?", path).Scan(&j.ID, &j.Signature, &j.Metadata); err != nil {
 		t.Fatal(err)
 	}
 	return j

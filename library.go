@@ -85,8 +85,13 @@ func newLibrary(c Config) (*Library, error) {
 CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,path TEXT UNIQUE NOT NULL,directory TEXT NOT NULL,signature TEXT NOT NULL,metadata TEXT NOT NULL,search TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS image_path ON images(path COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS image_order ON images(path COLLATE NOCASE,path,id,directory);
-CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`)
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NOT NULL,label TEXT NOT NULL);`)
 	if err != nil {
+		l.Close()
+		return nil, err
+	}
+	if err = migrateCatalog(db); err != nil {
 		l.Close()
 		return nil, err
 	}
@@ -97,7 +102,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`)
 		return nil, err
 	}
 	if previous != "" && previous != rootPath {
-		if _, err = db.Exec("DELETE FROM images"); err != nil {
+		if _, err = db.Exec("DELETE FROM images; DELETE FROM locations"); err != nil {
 			l.Close()
 			return nil, err
 		}
@@ -176,6 +181,9 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	geoDone := make(chan struct{})
+	go func() { defer close(geoDone); l.geocode(ctx) }()
+	defer func() { <-geoDone }()
 	aiDone := make(chan struct{})
 	go func() { defer close(aiDone); l.ai.Run(ctx) }()
 	thumbnailDone := make(chan struct{})
@@ -270,7 +278,7 @@ func (l *Library) Scan(ctx context.Context) {
 			l.scanError(err)
 			return nil
 		}
-		_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images VALUES(?,?,?,?,?,?)", photo.ID, path, photo.Directory, signature, string(encoded), strings.ToLower(string(encoded)))
+		_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images(id,path,directory,signature,metadata,search) VALUES(?,?,?,?,metadata_pack(?),metadata_search(?))", photo.ID, path, photo.Directory, signature, string(encoded), string(encoded))
 		return err
 	})
 	if err != nil {
@@ -317,7 +325,7 @@ func (l *Library) Scan(ctx context.Context) {
 func imageID(path string) string { s := sha256.Sum256([]byte(path)); return hex.EncodeToString(s[:12]) }
 func (l *Library) get(ctx context.Context, id string) (Photo, error) {
 	var encoded string
-	err := l.db.QueryRowContext(ctx, "SELECT metadata FROM images WHERE id=?", id).Scan(&encoded)
+	err := l.db.QueryRowContext(ctx, "SELECT metadata_json(metadata) FROM images WHERE id=?", id).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, bad(404, "Unknown image")
 	}

@@ -261,7 +261,7 @@ func (l *Library) warmThumbnails(ctx context.Context) {
 	cursor := ""
 	completed := 0
 	for ctx.Err() == nil {
-		rows, err := l.db.QueryContext(ctx, "SELECT path,metadata FROM images WHERE path>? COLLATE BINARY ORDER BY path COLLATE BINARY LIMIT 24", cursor)
+		rows, err := l.db.QueryContext(ctx, "SELECT path,metadata_json(metadata) FROM images WHERE path>? COLLATE BINARY ORDER BY path COLLATE BINARY LIMIT 24", cursor)
 		if err != nil {
 			if !waitContext(ctx, 30*time.Second) {
 				return

@@ -1559,3 +1559,13 @@ dialog::backdrop {
 .person-editor .merge-choice input { width:20px; height:20px; margin:0; }
 #mergeConfirmGroups { max-height:45vh; overflow:auto; }
 #mergeConfirmError { color:var(--danger); }
+
+#photoDisplayControls { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.photo-details { display: none; }
+.gallery.list-view { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.gallery.list-view .photo-card { display: flex; align-items: center; gap: 18px; padding: 8px; border-bottom: 1px solid var(--sunken); }
+.gallery.list-view .photo-open { width: 120px; flex-shrink: 0; }
+.gallery.list-view .photo-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding-right: 45px; }
+.gallery.list-view .photo-details { display: block; overflow-wrap: anywhere; }
+.gallery.list-view .photo-heart { opacity: 1; }
+.gallery.list-view .photo-select { opacity: 1; }

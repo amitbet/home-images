@@ -13,8 +13,10 @@ import (
 // SQLite driver can discard an interrupted connection; every replacement must
 // receive the same setup before a query can use it.
 func openSQLite(path string, attachments map[string]string, readOnly bool) *sql.DB {
-	d := &sqlite.Driver{}
-	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
+	registered, _ := sql.Open("sqlite", path)
+	d := registered.Driver()
+	_ = registered.Close()
+	setup := func(conn sqlite.ExecQuerierContext) error {
 		ctx := context.Background()
 		if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout=10000", nil); err != nil {
 			return err
@@ -38,21 +40,30 @@ func openSQLite(path string, attachments map[string]string, readOnly bool) *sql.
 			return err
 		}
 		return nil
-	})
-	db := sql.OpenDB(&sqliteConnector{driver: d, path: path})
+	}
+	db := sql.OpenDB(&sqliteConnector{driver: d, path: path, setup: setup})
 	db.SetMaxOpenConns(1)
 	return db
 }
 
 type sqliteConnector struct {
-	driver *sqlite.Driver
+	driver driver.Driver
 	path   string
+	setup  func(sqlite.ExecQuerierContext) error
 }
 
 func (c *sqliteConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return c.driver.Open(c.path)
+	conn, err := c.driver.Open(c.path)
+	if err != nil {
+		return nil, err
+	}
+	if err = c.setup(conn.(sqlite.ExecQuerierContext)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 func (c *sqliteConnector) Driver() driver.Driver { return c.driver }

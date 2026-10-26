@@ -235,17 +235,19 @@ and face embeddings. Pin its container version: `/predict` is an internal Immich
 protocol, not a versioned public API. The container downloads models on first use.
 Keep its unauthenticated port restricted to your trusted network.
 
-Indexing uses a separate `ai.sqlite3` WAL database and one throttled background
-worker. Preview decoding runs in a separate single-core process with a soft 256 MiB
+Indexing uses a separate `ai.sqlite3` WAL database, a queue of at most two prepared
+images, and concurrent remote inference requests (`ml.concurrency`, default 2,
+maximum 4). Preview preparation overlaps with inference; saving and face clustering
+remain serialized. `interval_ms` is accepted for older configurations but adds no
+delay. Preview decoding runs in a separate single-core process with a soft 256 MiB
 Go memory target and below-normal CPU priority on Windows. The worker waits while
 foreground rendering is active, never takes a foreground rendering slot, and holds
-no catalog connection while contacting the Mac. CPU, RAM and disk are still shared;
-this is bounded background work, not a guarantee of zero resource contention.
+no catalog connection while contacting the Mac. CPU, RAM and disk are still shared.
 
 Progress survives restarts. New or changed photos are queued automatically; changing
 models makes old results ineligible until recomputed. A Mac outage backs off for 30
 seconds. Undecodable files and invalid results are retried after an hour, or via the
-retry control. Pause/resume is persistent; an in-flight image finishes before pause.
+retry control. Pause/resume is persistent; requests already in flight finish before pause.
 Do not delete `ai.sqlite3`: it also contains user-assigned people names and merges.
 Back up the entire data directory with the service stopped, including curation data.
 
@@ -396,3 +398,75 @@ do not pause indexing; actual foreground decoding takes priority. Pause stops ne
 work while allowing requests already in flight to finish. Outages cancel the current
 batch and retry pending work after 30 seconds without marking the library as failed.
 `/api/indexing` includes in-flight count, session throughput and mean stage timings.
+
+
+## Automatic photo locations
+
+On startup, Home Images downloads `cities500.zip`, `admin1CodesASCII.txt` and
+`countryInfo.txt` from GeoNames into `<data_dir>/geonames` if missing (about 14 MB
+compressed city data plus region/country tables). Subsequent lookups run entirely
+locally: GPS coordinates are never sent to a geocoding API. For offline setup,
+copy these three files from https://download.geonames.org/export/dump/ into that
+folder before starting. Failed downloads retry after ten minutes; browsing and ML
+indexing continue independently.
+
+A background worker backfills all indexed images in bounded batches and catches
+new or changed photos automatically. `index-go.sqlite3` stores disposable,
+signature-validated results in `locations`; originals and manual annotations are
+untouched. `GET /api/curation/{id}` and batch curation responses expose
+`auto_location` separately from the editable `location`. Gallery, viewer and Echo
+captions prefer the manual label, falling back to the automatic label. Location
+sorting uses the same fallback. No GPS or no settlement within 50 km produces an
+empty automatic caption. These are approximate nearest-settlement labels, not
+street addresses or administrative boundary determinations.
+
+Data attribution: [GeoNames](https://www.geonames.org/), licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+The local lookup formats city, region and country names from these source files.
+
+
+## Catalog storage and migration
+
+Catalog version **1** stores lossless JSON metadata as zlib-compressed BLOBs with
+an `HIM` + version-byte header. SQLite's `PRAGMA user_version` identifies the
+catalog schema; the original unversioned catalog is version **0**. This version
+applies to `index-go.sqlite3`, independently of the AI and curation databases.
+`/health` reports `catalog_version`, and the following command inspects an existing
+catalog read-only (including a live catalog's WAL):
+
+```sh
+./home-images --db-info /path/to/index-go.sqlite3
+```
+
+Startup automatically migrates version 0 before serving requests or starting
+workers. The schema, compressed metadata, smaller search text and version marker
+commit in one transaction. Failure rolls back the entire migration; retrying is
+safe. Unknown newer versions are rejected. IDs, signatures, metadata JSON, AI
+embeddings, annotations and location results are preserved. Existing Python index
+imports and new filesystem scans also use compressed storage.
+
+For a planned upgrade, stop the service and back up the catalog first. Allow
+additional free disk space for SQLite's transaction journal/WAL and compaction.
+The first upgrade can take several minutes for a large library. To migrate a
+stopped catalog without accessing photo originals and reclaim unused pages:
+
+```sh
+./home-images --migrate-catalog /path/to/index-go.sqlite3 --compact
+./home-images --db-info /path/to/index-go.sqlite3
+```
+
+Compaction is optional and is not run automatically at startup. Older binaries
+cannot read the compressed catalog; restore the pre-upgrade backup to downgrade.
+With a generic SQLite client, metadata requires decompression before JSON queries
+(strip the four-byte header, then zlib-decompress). The application registers
+`metadata_json(metadata)` on its own SQLite connections for this purpose.
+
+The open `search` column contains deduplicated lowercase readable string values:
+paths, filenames, dates, camera names, descriptions, captions, keywords and genuine
+text comments, including Unicode. JSON property names, numeric values/arrays,
+API URLs and strings containing binary control bytes or invalid-text replacement
+characters are excluded. Their original data remains in compressed metadata.
+Curation titles/descriptions/tags/locations continue to be searched separately;
+semantic object/event search (for example, dogs or birthday scenes) continues to
+use CLIP embeddings in the AI database. Date and size filters/sorts use separate
+columns maintained when metadata changes, without decompressing the catalog.
