@@ -302,13 +302,10 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	base += " AND i.id IN(SELECT id FROM catalog.images WHERE " + visible + ")"
+	base += " AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND " + visible + ")"
 	args = append(args, visibilityArgs...)
 	var total int
-	if err = a.read.QueryRowContext(r.Context(), "SELECT count(DISTINCT p.id)"+base, args...).Scan(&total); err != nil {
-		return err
-	}
-	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id", args...)
 	if err != nil {
 		return err
 	}
@@ -318,6 +315,10 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 		var p personSummary
 		if err = rows.Scan(&p.ID, &p.Name, &p.Count); err != nil {
 			return err
+		}
+		total++
+		if total <= offset || len(items) >= limit {
+			continue
 		}
 		p.ImageURL = fmt.Sprintf("/api/people/%d/image", p.ID)
 		if r.URL.Query().Get("hidden") == "all" || r.URL.Query().Get("hidden") == "only" {

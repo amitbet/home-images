@@ -792,7 +792,19 @@ function selectPerson(p) {
   load();
 }
 const mergeSelection = new Map();
+let suggestedGroups = [];
+let suggestionGeneration = 0;
+$("selectAllSuggestions").onclick = () => {
+  const allSelected = suggestedGroups.every(p => mergeSelection.has(p.id));
+  for (const p of suggestedGroups) {
+    if (allSelected) mergeSelection.delete(p.id);
+    else mergeSelection.set(p.id, p);
+  }
+  updateMergeSelection();
+};
 function updateMergeSelection() {
+  $("selectAllSuggestions").disabled = !suggestedGroups.length;
+  $("selectAllSuggestions").textContent = suggestedGroups.length && suggestedGroups.every(p => mergeSelection.has(p.id)) ? "Deselect all matches" : "Select all matches";
   $("mergeSelectionCount").textContent = mergeSelection.size ? `${mergeSelection.size} groups selected` : "No groups selected";
   $("mergePerson").disabled = !mergeSelection.size;
   for (const input of document.querySelectorAll("input[data-merge-group]")) {
@@ -1905,10 +1917,21 @@ document.addEventListener("visibilitychange", () => {
 async function loadPersonSuggestions(person) {
   $("reviewPortrait").src = person.image_url || `/api/people/${person.id}/image`;
   const container = $("personSuggestions");
-  container.textContent = "Looking for similar groups?";
+  const generation = ++suggestionGeneration;
+  suggestedGroups = [];
+  updateMergeSelection();
+  container.setAttribute("aria-busy", "true");
+  const loading = text("div", "", "suggestions-loading");
+  const spinner = text("span", "", "loading-spinner");
+  spinner.setAttribute("aria-hidden", "true");
+  loading.setAttribute("role", "status");
+  loading.append(spinner, text("span", "Searching for similar groups..."));
+  container.replaceChildren(loading);
   try {
     const result = await api(`/api/people/${person.id}/suggestions`);
-    if (state.editing.id !== person.id) return;
+    if (state.editing.id !== person.id || generation !== suggestionGeneration) return;
+    suggestedGroups = result.items;
+    updateMergeSelection();
     container.replaceChildren();
     if (!result.items.length) container.textContent = "No suggested matches yet. You can still search for a group below.";
     for (const candidate of result.items) {
@@ -1924,7 +1947,7 @@ async function loadPersonSuggestions(person) {
       const dismiss = text("button", "Not the same person", "text-button");
       dismiss.onclick = async () => {
         dismiss.disabled = true;
-        try { await api(`/api/people/${person.id}/dismiss`, {other:candidate.id}); mergeSelection.delete(candidate.id); row.remove(); updateMergeSelection();
+        try { await api(`/api/people/${person.id}/dismiss`, {other:candidate.id}); mergeSelection.delete(candidate.id); suggestedGroups = suggestedGroups.filter(p => p.id !== candidate.id); row.remove(); updateMergeSelection();
           if (!container.children.length) container.textContent = "No more suggested matches.";
           loadMergeUndo(person);
         } catch(e) { $("editError").textContent=e.message; dismiss.disabled=false; }
@@ -1932,7 +1955,8 @@ async function loadPersonSuggestions(person) {
       row.append(image, info, choose, dismiss); container.append(row);
       updateMergeSelection();
     }
-  } catch(e) { if (state.editing.id === person.id) container.textContent=e.message; }
+  } catch(e) { if (state.editing.id === person.id && generation === suggestionGeneration) container.textContent=e.message; }
+  finally { if (generation === suggestionGeneration) container.setAttribute("aria-busy", "false"); }
 }
 
 function confirmPersonAction(message) {
