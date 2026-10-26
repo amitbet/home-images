@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -22,13 +21,14 @@ func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	mux.HandleFunc("/api/people", wrap(a.people))
 	mux.HandleFunc("/api/people/undo", a.mutation(a.undoPersonMerge))
 	mux.HandleFunc("/api/people/merge-history", wrap(a.personMergeHistory))
-	mux.HandleFunc("/api/faces/{face}", a.mutation(a.moveFace))
 	mux.HandleFunc("/api/people/{person}/suggestions", wrap(a.personSuggestions))
 	mux.HandleFunc("/api/people/{person}/dismiss", a.mutation(a.dismissPerson))
 	mux.HandleFunc("/api/people/{person}/image", wrap(a.faceImage))
 	mux.HandleFunc("/api/images/{id}/faces", wrap(a.imageFaces))
 	mux.HandleFunc("/api/indexing/control", a.mutation(a.control))
 	mux.HandleFunc("/api/people/{person}", a.mutation(a.editPerson))
+	mux.HandleFunc("/api/faces", a.mutation(a.batchFaces))
+	mux.HandleFunc("/api/faces/{face}", a.mutation(a.editFace))
 }
 
 // Require a custom header and same-origin writes. The existing read-only LAN
@@ -73,19 +73,19 @@ func (a *AI) mutation(fn endpoint) http.HandlerFunc {
 }
 func (a *AI) indexStatus(w http.ResponseWriter, r *http.Request) error {
 	var total, indexed, failed, faces, people int
-	if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images").Scan(&total); err != nil {
+	if err := a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images").Scan(&total); err != nil {
 		return err
 	}
-	if err := a.db.QueryRowContext(r.Context(), `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&indexed, &failed); err != nil {
+	if err := a.read.QueryRowContext(r.Context(), `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&indexed, &failed); err != nil {
 		return err
 	}
-	if err := a.db.QueryRowContext(r.Context(), `SELECT count(*),count(DISTINCT f.person_id) FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&faces, &people); err != nil {
+	if err := a.read.QueryRowContext(r.Context(), `SELECT count(*),count(DISTINCT f.person_id) FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&faces, &people); err != nil {
 		return err
 	}
 	a.mu.Lock()
 	active, lastErr, lastSuccess, online := a.active, a.lastError, a.lastSuccess, a.online
 	a.mu.Unlock()
-	return writeJSON(w, 200, map[string]any{"enabled": a.lib.config.ML.Enabled, "paused": a.paused.Load(), "worker_url": a.lib.config.ML.URL, "worker_online": online, "active": active, "total": total, "indexed": indexed - failed, "failed": failed, "pending": total - indexed, "faces": faces, "people": people, "last_error": lastErr, "last_success": lastSuccess, "clip_model": a.lib.config.ML.ClipModel, "face_model": a.lib.config.ML.FaceModel, "interval_ms": a.lib.config.ML.IntervalMS})
+	return writeJSON(w, 200, map[string]any{"enabled": a.lib.config.ML.Enabled, "paused": a.paused.Load(), "worker_url": a.lib.config.ML.URL, "worker_online": online, "active": active, "total": total, "indexed": indexed - failed, "failed": failed, "pending": total - indexed, "faces": faces, "people": people, "last_error": lastErr, "last_success": lastSuccess, "clip_model": a.lib.config.ML.ClipModel, "face_model": a.lib.config.ML.FaceModel, "interval_ms": 0, "concurrency": a.lib.config.ML.Concurrency, "in_flight": a.pipeline.inFlight.Load(), "session_completed": a.pipeline.completed.Load(), "session_images_per_minute": a.pipelineRate(), "timings_ms": a.pipelineTimings()})
 }
 func (a *AI) control(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
@@ -164,6 +164,118 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// Retag one face without changing the rest of its group. A name selects the
+// existing unmerged person with that name (case-insensitive), or creates one.
+func (a *AI) editFace(w http.ResponseWriter, r *http.Request) error {
+	faceID, err := strconv.ParseInt(r.PathValue("face"), 10, 64)
+	if err != nil || faceID < 1 {
+		return bad(400, "Invalid face")
+	}
+	var body struct {
+		Name     *string `json:"name"`
+		Person   int64   `json:"person"`
+		PersonID int64   `json:"person_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		return bad(400, "Invalid JSON")
+	}
+	if body.Person < 0 || body.PersonID < 0 || (body.Person != 0 && body.PersonID != 0) {
+		return bad(400, "Choose one person")
+	}
+	if body.Person != 0 {
+		body.PersonID = body.Person
+	}
+	if (body.Name != nil) == (body.PersonID != 0) {
+		return bad(400, "Provide name or person_id")
+	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var imageID, model string
+	var current int64
+	var embedding []byte
+	if err = tx.QueryRow("SELECT f.image_id,f.person_id,f.embedding,p.model FROM faces f JOIN people p ON p.id=f.person_id WHERE f.id=?", faceID).Scan(&imageID, &current, &embedding, &model); errors.Is(err, sql.ErrNoRows) {
+		return bad(404, "Face not found")
+	} else if err != nil {
+		return err
+	}
+	var target int64
+	var name string
+	created := false
+	if body.PersonID != 0 {
+		var targetModel string
+		if err = tx.QueryRow("SELECT coalesce(merged_into,id) FROM people WHERE id=?", body.PersonID).Scan(&target); errors.Is(err, sql.ErrNoRows) {
+			return bad(404, "Person not found")
+		} else if err != nil {
+			return err
+		}
+		if err = tx.QueryRow("SELECT name,model FROM people WHERE id=?", target).Scan(&name, &targetModel); err != nil {
+			return err
+		}
+		if targetModel != model {
+			return bad(400, "Groups from different face models cannot be combined")
+		}
+	} else {
+		name = strings.TrimSpace(*body.Name)
+		if name == "" || utf8.RuneCountInString(name) > 100 {
+			return bad(400, "Name must be 1 to 100 characters")
+		}
+		// Prefer the largest group when several share a name.
+		err = tx.QueryRow("SELECT p.id,p.name FROM people p LEFT JOIN faces f ON f.person_id=p.id WHERE p.model=? AND p.merged_into IS NULL AND p.name=? COLLATE NOCASE GROUP BY p.id ORDER BY count(f.id) DESC,p.id LIMIT 1", model, name).Scan(&target, &name)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Faces indexed before per-face embeddings get an empty
+			// representative, which never matches new photos automatically.
+			result, e := tx.Exec("INSERT INTO people(name,model,embedding) VALUES(?,?,?)", name, model, nonNil(embedding))
+			if e != nil {
+				return e
+			}
+			if target, err = result.LastInsertId(); err != nil {
+				return err
+			}
+			created = true
+		} else if err != nil {
+			return err
+		}
+	}
+	if target != current {
+		var taken int
+		if err = tx.QueryRow("SELECT count(*) FROM faces WHERE image_id=? AND person_id=? AND id!=?", imageID, target, faceID).Scan(&taken); err != nil {
+			return err
+		}
+		if taken > 0 {
+			return bad(409, "That person is already tagged in this photo")
+		}
+		if _, err = tx.Exec("UPDATE faces SET person_id=? WHERE id=?", target, faceID); err != nil {
+			return err
+		}
+		// An alias representative, as merges keep, so similar faces in new
+		// photos join the corrected person.
+		if !created && len(embedding) > 0 {
+			if _, err = tx.Exec("INSERT INTO people(name,model,embedding,merged_into) VALUES('',?,?,?)", model, embedding, target); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err = tx.Exec(`INSERT OR REPLACE INTO face_overrides(image_id,signature,model,box,person_id) SELECT f.image_id,ai.signature,?,f.box,? FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.id=?`, model, target, faceID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM ai_settings WHERE key='merge_undo'"); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"ok": true, "person_id": target, "name": name})
+}
+func nonNil(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
+}
+
 type personSummary struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -218,29 +330,65 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	}
 	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset})
 }
-func (a *AI) imageFaces(w http.ResponseWriter, r *http.Request) error {
+
+type faceTag struct {
+	ID       int64           `json:"id"`
+	PersonID int64           `json:"person_id"`
+	Name     string          `json:"name"`
+	Box      json.RawMessage `json:"box"`
+	Width    int             `json:"width"`
+	Height   int             `json:"height"`
+}
+
+// Indexed faces for the given images, keyed by image ID, honoring the hidden filter.
+func (a *AI) faceTags(r *http.Request, ids []string) (map[string][]faceTag, error) {
+	result := map[string][]faceTag{}
+	if len(ids) == 0 {
+		return result, nil
+	}
 	visible, args, err := a.lib.curationSelection(r, "1=1", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rows, err := a.read.QueryContext(r.Context(), `SELECT f.id,f.person_id,p.name,f.box,f.width,f.height FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE f.image_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`)`, append([]any{r.PathValue("id"), a.models}, args...)...)
+	query := []any{a.models}
+	for _, id := range ids {
+		query = append(query, id)
+	}
+	rows, err := a.read.QueryContext(r.Context(), `SELECT f.image_id,f.id,f.person_id,p.name,f.box,f.width,f.height FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND f.image_id IN(?`+strings.Repeat(",?", len(ids)-1)+`) AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`) ORDER BY f.id`, append(query, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var image, box string
+		var f faceTag
+		if err = rows.Scan(&image, &f.ID, &f.PersonID, &f.Name, &box, &f.Width, &f.Height); err != nil {
+			return nil, err
+		}
+		f.Box = json.RawMessage(box)
+		result[image] = append(result[image], f)
+	}
+	return result, rows.Err()
+}
+func (a *AI) imageFaces(w http.ResponseWriter, r *http.Request) error {
+	tags, err := a.faceTags(r, []string{r.PathValue("id")})
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id, person, width, height int
-		var name, box string
-		if err = rows.Scan(&id, &person, &name, &box, &width, &height); err != nil {
-			return err
-		}
-		items = append(items, map[string]any{"id": id, "person_id": person, "name": name, "box": json.RawMessage(box), "width": width, "height": height})
+	return writeJSON(w, 200, append([]faceTag{}, tags[r.PathValue("id")]...))
+}
+func (a *AI) batchFaces(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		IDs []string `json:"ids"`
 	}
-	if err = rows.Err(); err != nil {
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.IDs) > 60 {
+		return bad(400, "Provide up to 60 image IDs")
+	}
+	tags, err := a.faceTags(r, body.IDs)
+	if err != nil {
 		return err
 	}
-	return writeJSON(w, 200, items)
+	return writeJSON(w, 200, tags)
 }
 func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
 	id, err := personID(r)
@@ -260,7 +408,6 @@ func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	a.lib.lastRender.Store(time.Now().UnixNano())
 	p, err := a.lib.get(r.Context(), imageID)
 	if err != nil {
 		return err

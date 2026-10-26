@@ -439,11 +439,97 @@ func TestWorkerExecutableKeepsServing(t *testing.T) {
 			}
 			err = json.NewDecoder(resp.Body).Decode(&status)
 			resp.Body.Close()
-			if err == nil && status.Indexed == 1 && status.Paused {
+			if err == nil && status.Indexed >= 1 && status.Indexed <= c.ML.Concurrency && status.Paused {
 				return
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("worker did not persist result and pause after in-flight request")
+}
+func TestRetagSingleFace(t *testing.T) {
+	l, s, _ := fixture(t)
+	a := l.ai
+	ctx := context.Background()
+	two := syntheticPrediction()
+	two.Faces = append(two.Faces, mlFace{Box: faceBox{34, 8, 60, 40}, Score: .95, Embedding: json.RawMessage(`"[0,1,0]"`)})
+	if err := a.save(ctx, testJob(t, l, "a.jpg"), two); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.save(ctx, testJob(t, l, "b.jpg"), syntheticPrediction()); err != nil {
+		t.Fatal(err)
+	}
+	var faces []struct {
+		ID       int64 `json:"id"`
+		PersonID int64 `json:"person_id"`
+	}
+	getJSON(t, s, "/api/images/"+imageID("b.jpg")+"/faces", &faces)
+	if len(faces) != 1 {
+		t.Fatal(faces)
+	}
+	face, original := faces[0].ID, faces[0].PersonID
+	if postTest(t, s, "/api/people/"+fmtID(original), `{"name":"Dana"}`) != 200 {
+		t.Fatal("rename failed")
+	}
+	// A new name moves only this face and creates a group.
+	if postTest(t, s, "/api/faces/"+fmtID(face), `{"name":"Amit"}`) != 200 {
+		t.Fatal("retag failed")
+	}
+	var groups struct{ Items []personSummary }
+	getJSON(t, s, "/api/people?q=Amit", &groups)
+	if len(groups.Items) != 1 || groups.Items[0].Count != 1 {
+		t.Fatal(groups)
+	}
+	amit := groups.Items[0].ID
+	getJSON(t, s, "/api/people?q=Dana", &groups)
+	if len(groups.Items) != 1 || groups.Items[0].Count != 1 {
+		t.Fatal("other photos left the original group", groups)
+	}
+	// An existing name, matched case-insensitively, reuses that group.
+	if postTest(t, s, "/api/faces/"+fmtID(face), `{"name":"dana"}`) != 200 {
+		t.Fatal("retag to existing failed")
+	}
+	getJSON(t, s, "/api/people?q=Dana", &groups)
+	if len(groups.Items) != 1 || groups.Items[0].ID != original || groups.Items[0].Count != 2 {
+		t.Fatal(groups)
+	}
+	if postTest(t, s, "/api/faces/"+fmtID(face), `{"person_id":`+fmtID(amit)+`}`) != 200 {
+		t.Fatal("retag by id failed")
+	}
+	// The corrected face's embedding becomes an alias: similar new faces follow it.
+	if err := a.save(ctx, testJob(t, l, "album_100%/c.jpg"), syntheticPrediction()); err != nil {
+		t.Fatal(err)
+	}
+	getJSON(t, s, "/api/people?q=Amit", &groups)
+	if len(groups.Items) != 1 || groups.Items[0].Count < 1 {
+		t.Fatal(groups)
+	}
+	req, _ := http.NewRequest("POST", s.URL+"/api/faces", strings.NewReader(`{"ids":["`+imageID("a.jpg")+`","`+imageID("b.jpg")+`","missing"]}`))
+	req.Header.Set("X-Home-Images", "1")
+	resp, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batch map[string][]faceTag
+	err = json.NewDecoder(resp.Body).Decode(&batch)
+	resp.Body.Close()
+	if err != nil || len(batch[imageID("a.jpg")]) != 2 || len(batch[imageID("b.jpg")]) != 1 || len(batch["missing"]) != 0 {
+		t.Fatal("batch faces", batch, err)
+	}
+	// One person cannot hold two faces in the same photo.
+	getJSON(t, s, "/api/images/"+imageID("a.jpg")+"/faces", &faces)
+	if len(faces) != 2 {
+		t.Fatal(faces)
+	}
+	if postTest(t, s, "/api/faces/"+fmtID(faces[1].ID), `{"person_id":`+fmtID(faces[0].PersonID)+`}`) != 409 {
+		t.Fatal("duplicate person in one photo accepted")
+	}
+	for _, body := range []string{`{}`, `{"name":"  "}`, `{"name":"x","person_id":1}`} {
+		if postTest(t, s, "/api/faces/"+fmtID(face), body) != 400 {
+			t.Fatal("accepted", body)
+		}
+	}
+	if postTest(t, s, "/api/faces/999999", `{"name":"x"}`) != 404 {
+		t.Fatal("missing face")
+	}
 }

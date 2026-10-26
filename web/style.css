@@ -1013,6 +1013,7 @@ dialog::backdrop {
   flex-direction: column;
 }
 .viewer-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1063,6 +1064,121 @@ dialog::backdrop {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.face-layer {
+  position: absolute;
+  pointer-events: none;
+}
+.face-box {
+  position: absolute;
+  pointer-events: auto;
+  padding: 0;
+  background: none;
+  border: 2px solid #ffffffb3;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #0000004d;
+  cursor: pointer;
+}
+.face-box.unnamed {
+  border-style: dashed;
+}
+.face-box:hover,
+.face-box.active,
+.face-box:focus-visible {
+  border-color: #f2b8ae;
+  outline: none;
+}
+.face-label {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1.3;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #0d110fcc;
+  color: #eef1ed;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.face-box:hover .face-label,
+.face-box.active .face-label,
+.face-box:focus-visible .face-label,
+.face-box:not(.unnamed) .face-label {
+  opacity: 1;
+}
+.thumb-faces {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.thumb-faces .face-box {
+  border-width: 1.5px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.thumb-faces .face-label {
+  font-size: 12px;
+  padding: 1px 6px;
+  max-width: 120px;
+}
+.photo-card:hover .thumb-faces .face-box,
+.photo-card:focus-within .thumb-faces .face-box {
+  opacity: 1;
+}
+@media (hover: none) {
+  .thumb-faces .face-box:not(.unnamed) {
+    opacity: 0.85;
+  }
+}
+.viewer.playing .face-layer {
+  display: none;
+}
+.image-people button.active {
+  border-color: #f2b8ae;
+}
+.face-crop {
+  display: block;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  margin: 12px 0 0;
+  background: var(--line);
+}
+.face-scope {
+  border: 0;
+  padding: 0;
+  margin: 16px 0 0;
+}
+.face-scope legend {
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink-2);
+  padding: 0;
+}
+.person-editor .face-scope .check-label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 8px 0 0;
+  font-weight: 400;
+}
+.person-editor .face-scope input {
+  width: auto;
+  min-height: 0;
+}
+.person-editor #faceError {
+  color: var(--danger);
 }
 .image-people button {
   font-size: 14px;

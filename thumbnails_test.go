@@ -270,3 +270,26 @@ func TestViewerPreviewCacheAndInvalidation(t *testing.T) {
 		t.Fatal("stale viewer preview", config, err)
 	}
 }
+func TestCachedThumbnailDoesNotPauseIndexing(t *testing.T) {
+	l, s, _ := fixture(t)
+	url := s.URL + "/api/images/" + imageID("a.jpg") + "/thumbnail"
+	first, err := s.Client().Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	if first.StatusCode != 200 || l.lastRender.Load() == 0 {
+		t.Fatal("cold render did not signal foreground work")
+	}
+	l.lastRender.Store(0)
+	second, err := s.Client().Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, second.Body)
+	second.Body.Close()
+	if second.StatusCode != 200 || l.lastRender.Load() != 0 {
+		t.Fatal("cached thumbnail incorrectly paused indexing")
+	}
+}

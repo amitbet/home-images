@@ -13,7 +13,7 @@
     "url": "http://192.168.1.20:3003",
     "clip_model": "ViT-B-32__openai",
     "face_model": "buffalo_l",
-    "interval_ms": 2000,
+    "concurrency": 2,
     "face_similarity": 0.6
   }
 }

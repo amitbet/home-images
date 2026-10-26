@@ -225,7 +225,7 @@ needed on the image server. Add this section to `config.json`, then restart:
   "url": "http://192.168.1.20:3003",
   "clip_model": "ViT-B-32__openai",
   "face_model": "buffalo_l",
-  "interval_ms": 2000,
+  "concurrency": 2,
   "face_similarity": 0.6
 }
 ```
@@ -270,6 +270,12 @@ people filters, and ordinary browsing remain usable without the Mac.
   through the UI. Separate people with the same name are still separate groups.
 - `GET /api/people/12/image` serves a face thumbnail.
 - `GET /api/images/IMAGE_ID/faces` returns groups and face boxes for that photo.
+- `POST /api/faces` with `{"ids":["IMAGE_ID", ...]}` (up to 60) returns face boxes keyed by
+  image ID, for tagging thumbnails. Accepts `hidden=only|all` like other reads.
+- `POST /api/faces/FACE_ID` retags one face: `{"name":"Dana"}` moves it to the existing
+  person with that name (case-insensitive) or creates one; `{"person_id":34}` moves it to
+  that group. Returns 409 if the person is already tagged in the photo. Faces indexed from
+  this version on store their embedding, so a corrected face also steers future matches.
 - `GET /api/indexing` reports indexed/pending/failed counts and worker status.
 - `POST /api/indexing/control` accepts `{"action":"pause"}`, `resume`, or `retry`.
 
@@ -379,3 +385,14 @@ For native tests, set `HOMEIMAGES_TEST_TURBO_DLL` to the absolute DLL path and
 `HOMEIMAGES_TEST_PREVIEW_EXE` to a freshly built application executable, then run
 `go test ./...`. Tests cover all eight orientations, progressive JPEG, dimensions,
 pixel limits, cancellation, isolated execution and missing/unloadable DLL fallback.
+
+### Indexing throughput
+
+Indexing prepares previews with one isolated background decoder, queues at most two
+prepared images, runs two remote ML requests concurrently by default, and saves
+results sequentially. `ml.concurrency` can be set from 1 to 4. The old `interval_ms`
+setting is accepted but no longer inserts an artificial delay. Cached image reads
+do not pause indexing; actual foreground decoding takes priority. Pause stops new
+work while allowing requests already in flight to finish. Outages cancel the current
+batch and retry pending work after 30 seconds without marking the library as failed.
+`/api/indexing` includes in-flight count, session throughput and mean stage timings.

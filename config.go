@@ -24,6 +24,7 @@ type Config struct {
 }
 
 type MLConfig struct {
+	Concurrency    int     `json:"concurrency,omitempty"`
 	URL            string  `json:"url"`
 	Enabled        bool    `json:"enabled"`
 	ClipModel      string  `json:"clip_model"`
@@ -39,8 +40,14 @@ func (c *MLConfig) defaults() {
 	if c.FaceModel == "" {
 		c.FaceModel = "buffalo_l"
 	}
-	if c.IntervalMS < 1000 {
-		c.IntervalMS = 2000
+	if c.Concurrency < 1 {
+		c.Concurrency = 2
+	}
+	if c.Concurrency > 4 {
+		c.Concurrency = 4
+	}
+	if c.IntervalMS < 0 {
+		c.IntervalMS = 0
 	}
 	if c.FaceSimilarity == 0 {
 		c.FaceSimilarity = 0.6

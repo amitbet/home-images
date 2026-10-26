@@ -63,6 +63,18 @@ the source name. Photos indexed after the merge stay with their current group.
 A subsequent merge replaces the undo; moving a face or dismissing a suggestion clears
 it so undo cannot overwrite later corrections.
 
+Gallery thumbnails show the same face outlines when you hover a card (always shown for
+named faces on touch screens); click one to tag it without opening the viewer. Renames,
+merges and face retags update the open gallery, viewer and People cards in place.
+
+In the photo viewer, detected faces are outlined on the image with their names (unnamed
+faces are dashed). **Faces** toggles the outlines; they are hidden during playback. Click a
+face, or its chip under the title, to tag it. **Every photo of this person** renames the
+group; if the name already belongs to another group, saving offers to merge into it.
+**Only this face** moves just that face, to the group with that name or to a new person,
+for a face grouped with the wrong person. Reindexing a changed photo re-detects its
+faces, so a per-face correction on that photo is redone by matching.
+
 The status card shows indexed/pending/failed counts, worker availability, pause/resume,
 and retry controls. Browsing and annotations work independently of the Mac's availability.
 On small screens, the navigation scrolls horizontally; **Saved** opens saved selections

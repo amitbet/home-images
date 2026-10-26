@@ -154,6 +154,8 @@ func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]by
 // remain uncached to keep the shared disk budget useful.
 func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int) ([]byte, error) {
 	build := func() ([]byte, error) {
+		l.lastRender.Store(time.Now().UnixNano())
+		defer func() { l.lastRender.Store(time.Now().UnixNano()) }()
 		if l.renderSlots != nil {
 			select {
 			case l.renderSlots <- struct{}{}:

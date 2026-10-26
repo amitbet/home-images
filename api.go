@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -295,7 +294,6 @@ func (l *Library) original(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
-	l.lastRender.Store(time.Now().UnixNano())
 	width, err := intParam(r, "width", 1280, 32, 2560)
 	if err != nil {
 		return err

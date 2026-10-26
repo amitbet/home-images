@@ -14,7 +14,19 @@ import (
 	"time"
 )
 
+type aiPipelineStats struct {
+	inFlight    atomic.Int64
+	prepared    atomic.Int64
+	completed   atomic.Int64
+	previewUS   atomic.Int64
+	inferenceUS atomic.Int64
+	inferred    atomic.Int64
+	saveUS      atomic.Int64
+	waitUS      atomic.Int64
+	started     atomic.Int64
+}
 type AI struct {
+	pipeline          aiPipelineStats
 	lib               *Library
 	db, read          *sql.DB // Independent WAL database; never hold catalog connections during inference.
 	ml                *mlClient
@@ -57,6 +69,17 @@ func newAI(l *Library) (*AI, error) {
  CREATE TABLE IF NOT EXISTS ai_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	if err != nil {
 		return fail(err)
+	}
+	// Per-face embeddings let a manually retagged face teach recognition.
+	// Faces indexed before this column existed keep NULL.
+	var hasEmbedding int
+	if err = a.db.QueryRow("SELECT count(*) FROM pragma_table_info('faces') WHERE name='embedding'").Scan(&hasEmbedding); err != nil {
+		return fail(err)
+	}
+	if hasEmbedding == 0 {
+		if _, err = a.db.Exec("ALTER TABLE faces ADD COLUMN embedding BLOB"); err != nil {
+			return fail(err)
+		}
 	}
 	var root string
 	err = a.db.QueryRow("SELECT value FROM ai_settings WHERE key='root'").Scan(&root)
@@ -132,21 +155,28 @@ func (a *AI) setError(err error) {
 	a.mu.Unlock()
 	log.Printf("AI: %v", err)
 }
+func (a *AI) waitIndexing(ctx context.Context, foreground bool) bool {
+	start := time.Now()
+	defer func() { a.pipeline.waitUS.Add(time.Since(start).Microseconds()) }()
+	for a.paused.Load() || (foreground && (len(a.lib.renderSlots) > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 200*time.Millisecond)) {
+		if !waitContext(ctx, 50*time.Millisecond) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
+}
 func (a *AI) Run(ctx context.Context) {
 	if !a.lib.config.ML.Enabled || a.lib.config.ML.URL == "" {
 		return
 	}
-	// Let the HTTP listener and metadata scan settle first.
 	if !waitContext(ctx, 5*time.Second) {
 		return
 	}
+	a.pipeline.started.Store(time.Now().UnixNano())
 	cursor := ""
 	for ctx.Err() == nil {
-		if a.paused.Load() {
-			if !waitContext(ctx, time.Second) {
-				return
-			}
-			continue
+		if !a.waitIndexing(ctx, true) {
+			return
 		}
 		jobs, err := a.jobs(ctx, cursor)
 		if err != nil {
@@ -164,62 +194,76 @@ func (a *AI) Run(ctx context.Context) {
 			}
 			continue
 		}
-		for _, j := range jobs {
-			for a.paused.Load() || len(a.lib.renderSlots) > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 1500*time.Millisecond {
-				if !waitContext(ctx, time.Second) {
-					return
+		err = runAIPipeline(ctx, jobs, a.lib.config.ML.Concurrency,
+			func(batch context.Context, j aiJob) ([]byte, error) {
+				if !a.waitIndexing(batch, true) {
+					return nil, batch.Err()
 				}
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			var p Photo
-			if err = json.Unmarshal([]byte(j.Metadata), &p); err != nil {
-				a.setError(err)
-				cursor = j.ID
-				continue
-			}
-			a.mu.Lock()
-			a.active = p.Path
-			a.mu.Unlock()
-			// A single decoder and a two-second minimum gap; never takes a foreground render slot.
-			preview, err := a.lib.aiPreview(ctx, p)
-			if err != nil {
-				a.recordFailure(ctx, j, err)
-				cursor = j.ID
-			} else {
-				prediction, e := a.ml.predict(ctx, preview, "")
-				if e != nil {
-					a.mu.Lock()
-					a.online = false
-					a.active = ""
-					a.mu.Unlock()
-					a.setError(e)
-					if !waitContext(ctx, 30*time.Second) {
-						return
-					}
-					break // Retry this batch, not every file on an outage.
+				var p Photo
+				if err := json.Unmarshal([]byte(j.Metadata), &p); err != nil {
+					return nil, err
 				}
 				a.mu.Lock()
-				a.online = true
+				a.active = p.Path
 				a.mu.Unlock()
-				if err = a.save(ctx, j, prediction); err != nil {
-					a.recordFailure(ctx, j, err)
-				} else {
+				start := time.Now()
+				preview, err := a.lib.aiPreview(batch, p)
+				a.pipeline.previewUS.Add(time.Since(start).Microseconds())
+				a.pipeline.prepared.Add(1)
+				return preview, err
+			},
+			func(batch context.Context, preview []byte) (mlPrediction, error) {
+				if !a.waitIndexing(batch, false) {
+					return mlPrediction{}, batch.Err()
+				}
+				a.pipeline.inFlight.Add(1)
+				defer a.pipeline.inFlight.Add(-1)
+				start := time.Now()
+				prediction, err := a.ml.predict(batch, preview, "")
+				a.pipeline.inferenceUS.Add(time.Since(start).Microseconds())
+				a.pipeline.inferred.Add(1)
+				return prediction, err
+			},
+			func(result aiPipelineResult) error {
+				if result.inferenceError {
 					a.mu.Lock()
+					a.online = false
+					a.mu.Unlock()
+					a.setError(result.err)
+					return result.err
+				}
+				if result.err != nil {
+					a.recordFailure(ctx, result.job, result.err)
+					return nil
+				}
+				start := time.Now()
+				err := a.save(ctx, result.job, result.prediction)
+				a.pipeline.saveUS.Add(time.Since(start).Microseconds())
+				if err != nil {
+					a.recordFailure(ctx, result.job, err)
+				} else {
+					a.pipeline.completed.Add(1)
+					a.mu.Lock()
+					a.online = true
 					a.lastError = ""
 					a.lastSuccess = time.Now().UTC().Format(time.RFC3339)
 					a.mu.Unlock()
 				}
-				cursor = j.ID
-			}
-			a.mu.Lock()
-			a.active = ""
-			a.mu.Unlock()
-			if !waitContext(ctx, time.Duration(a.lib.config.ML.IntervalMS)*time.Millisecond) {
+				return nil
+			})
+		a.mu.Lock()
+		a.active = ""
+		a.mu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			if !waitContext(ctx, 30*time.Second) {
 				return
 			}
+			continue
 		}
+		cursor = jobs[len(jobs)-1].ID
 	}
 }
 func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
@@ -335,7 +379,7 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 			people = append(people, personVector{id, vectors[i]})
 		}
 		used[id] = true
-		if _, err = tx.ExecContext(ctx, "INSERT INTO faces(image_id,person_id,box,score,width,height) VALUES(?,?,?,?,?,?)", j.ID, id, string(box), f.Score, p.Width, p.Height); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO faces(image_id,person_id,box,score,width,height,embedding) VALUES(?,?,?,?,?,?,?)", j.ID, id, string(box), f.Score, p.Width, p.Height, vectors[i].blob()); err != nil {
 			return err
 		}
 	}
