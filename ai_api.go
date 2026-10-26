@@ -1,0 +1,376 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
+	a.curationRoutes(mux, wrap)
+	mux.HandleFunc("/api/indexing", wrap(a.indexStatus))
+	mux.HandleFunc("/api/search", wrap(a.search))
+	mux.HandleFunc("/api/playback/next", wrap(a.playbackNext))
+	mux.HandleFunc("/api/people", wrap(a.people))
+	mux.HandleFunc("/api/people/{person}/image", wrap(a.faceImage))
+	mux.HandleFunc("/api/images/{id}/faces", wrap(a.imageFaces))
+	mux.HandleFunc("/api/indexing/control", a.mutation(a.control))
+	mux.HandleFunc("/api/people/{person}", a.mutation(a.editPerson))
+}
+
+// Require a custom header and same-origin writes. The existing read-only LAN
+// API's wildcard CORS policy must not grant arbitrary websites write access.
+func (a *AI) mutation(fn endpoint) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			_ = writeJSON(w, 405, map[string]string{"detail": "Use POST"})
+			return
+		}
+		origin := r.Header.Get("Origin")
+		if r.Header.Get("X-Home-Images") != "1" {
+			_ = writeJSON(w, 403, map[string]string{"detail": "Missing request header"})
+			return
+		}
+		if origin != "" {
+			u, err := url.Parse(origin)
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			if err != nil || u.Host != r.Host || u.Scheme != scheme {
+				_ = writeJSON(w, 403, map[string]string{"detail": "Same-origin request required"})
+				return
+			}
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		// Invalidate snapshots on API edits even if the client disconnects after
+		// a committed write. This revision is independent of pooled connections.
+		if r.URL.Path != "/api/curation" {
+			defer a.selectionRevision.Add(1)
+		} // This batch endpoint only reads annotations.
+		if err := fn(w, r); err != nil {
+			status, msg := 500, "Request failed"
+			var e *apiError
+			if errors.As(err, &e) {
+				status, msg = e.code, e.text
+			}
+			_ = writeJSON(w, status, map[string]string{"detail": msg})
+		}
+	}
+}
+func (a *AI) indexStatus(w http.ResponseWriter, r *http.Request) error {
+	var total, indexed, failed, faces, people int
+	if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images").Scan(&total); err != nil {
+		return err
+	}
+	if err := a.db.QueryRowContext(r.Context(), `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&indexed, &failed); err != nil {
+		return err
+	}
+	if err := a.db.QueryRowContext(r.Context(), `SELECT count(*),count(DISTINCT f.person_id) FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&faces, &people); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	active, lastErr, lastSuccess, online := a.active, a.lastError, a.lastSuccess, a.online
+	a.mu.Unlock()
+	return writeJSON(w, 200, map[string]any{"enabled": a.lib.config.ML.Enabled, "paused": a.paused.Load(), "worker_url": a.lib.config.ML.URL, "worker_online": online, "active": active, "total": total, "indexed": indexed - failed, "failed": failed, "pending": total - indexed, "faces": faces, "people": people, "last_error": lastErr, "last_success": lastSuccess, "clip_model": a.lib.config.ML.ClipModel, "face_model": a.lib.config.ML.FaceModel, "interval_ms": a.lib.config.ML.IntervalMS})
+}
+func (a *AI) control(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		Action string `json:"action"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		return bad(400, "Invalid JSON")
+	}
+	switch body.Action {
+	case "pause", "resume":
+		paused := body.Action == "pause"
+		if _, err := a.db.ExecContext(r.Context(), "INSERT OR REPLACE INTO ai_settings VALUES('paused',?)", strconv.FormatBool(paused)); err != nil {
+			return err
+		}
+		a.paused.Store(paused)
+	case "retry":
+		if _, err := a.db.ExecContext(r.Context(), "UPDATE ai_images SET retry_at=0 WHERE error!=''"); err != nil {
+			return err
+		}
+	default:
+		return bad(400, "action must be pause, resume, or retry")
+	}
+	return writeJSON(w, 200, map[string]any{"paused": a.paused.Load()})
+}
+func personID(r *http.Request) (int64, error) {
+	id, err := strconv.ParseInt(r.PathValue("person"), 10, 64)
+	if err != nil || id < 1 {
+		return 0, bad(400, "Invalid person")
+	}
+	return id, nil
+}
+func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
+	id, err := personID(r)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Name      *string `json:"name"`
+		MergeInto int64   `json:"merge_into"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		return bad(400, "Invalid JSON")
+	}
+	if body.Name != nil && body.MergeInto != 0 {
+		return bad(400, "Rename or merge in separate requests")
+	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var model string
+	if err = tx.QueryRow("SELECT model FROM people WHERE id=?", id).Scan(&model); errors.Is(err, sql.ErrNoRows) {
+		return bad(404, "Person not found")
+	} else if err != nil {
+		return err
+	}
+	if body.MergeInto != 0 {
+		if body.MergeInto == id {
+			return bad(400, "Choose a different group")
+		}
+		var targetModel string
+		if err = tx.QueryRow("SELECT model FROM people WHERE id=?", body.MergeInto).Scan(&targetModel); errors.Is(err, sql.ErrNoRows) {
+			return bad(404, "Target person not found")
+		} else if err != nil {
+			return err
+		}
+		if model != targetModel {
+			return bad(400, "Groups from different face models cannot be merged")
+		}
+		// Keep source representatives as aliases so future photos match either group.
+		if _, err = tx.Exec("UPDATE faces SET person_id=? WHERE person_id=?", body.MergeInto, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("UPDATE people SET name='', merged_into=? WHERE id=?", body.MergeInto, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("UPDATE people SET merged_into=? WHERE merged_into=?", body.MergeInto, id); err != nil {
+			return err
+		}
+	} else if body.Name != nil {
+		name := strings.TrimSpace(*body.Name)
+		if utf8.RuneCountInString(name) > 100 {
+			return bad(400, "Name must be at most 100 characters")
+		}
+		if _, err = tx.Exec("UPDATE people SET name=? WHERE id=? AND merged_into IS NULL", name, id); err != nil {
+			return err
+		}
+	} else {
+		return bad(400, "Provide name or merge_into")
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+type personSummary struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Count    int    `json:"photo_count"`
+	ImageURL string `json:"image_url"`
+}
+
+func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
+	limit, err := intParam(r, "limit", 48, 1, 200)
+	if err != nil {
+		return err
+	}
+	offset, err := intParam(r, "offset", 0, 0, 1000000)
+	if err != nil {
+		return err
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if utf8.RuneCountInString(q) > 100 {
+		return bad(400, "Name query too long")
+	}
+	base := ` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error='' AND p.merged_into IS NULL AND p.name LIKE ? ESCAPE '!'`
+	args := []any{a.models, "%" + escapeLike(q) + "%"}
+	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
+	if err != nil {
+		return err
+	}
+	base += " AND i.id IN(SELECT id FROM catalog.images WHERE " + visible + ")"
+	args = append(args, visibilityArgs...)
+	var total int
+	if err = a.read.QueryRowContext(r.Context(), "SELECT count(DISTINCT p.id)"+base, args...).Scan(&total); err != nil {
+		return err
+	}
+	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY (p.name!='') DESC,count(DISTINCT f.image_id) DESC,p.id LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	items := []personSummary{}
+	for rows.Next() {
+		var p personSummary
+		if err = rows.Scan(&p.ID, &p.Name, &p.Count); err != nil {
+			return err
+		}
+		p.ImageURL = fmt.Sprintf("/api/people/%d/image", p.ID)
+		if r.URL.Query().Get("hidden") == "all" || r.URL.Query().Get("hidden") == "only" {
+			p.ImageURL += "?hidden=" + r.URL.Query().Get("hidden")
+		}
+		items = append(items, p)
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset})
+}
+func (a *AI) imageFaces(w http.ResponseWriter, r *http.Request) error {
+	visible, args, err := a.lib.curationSelection(r, "1=1", nil)
+	if err != nil {
+		return err
+	}
+	rows, err := a.read.QueryContext(r.Context(), `SELECT f.id,f.person_id,p.name,f.box,f.width,f.height FROM faces f JOIN people p ON p.id=f.person_id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE f.image_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`)`, append([]any{r.PathValue("id"), a.models}, args...)...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, person, width, height int
+		var name, box string
+		if err = rows.Scan(&id, &person, &name, &box, &width, &height); err != nil {
+			return err
+		}
+		items = append(items, map[string]any{"id": id, "person_id": person, "name": name, "box": json.RawMessage(box), "width": width, "height": height})
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, items)
+}
+func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
+	id, err := personID(r)
+	if err != nil {
+		return err
+	}
+	var imageID, box string
+	var width, height int
+	visible, args, err := a.lib.curationSelection(r, "1=1", nil)
+	if err != nil {
+		return err
+	}
+	err = a.read.QueryRowContext(r.Context(), `SELECT f.image_id,f.box,f.width,f.height FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE f.person_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE `+visible+`) ORDER BY f.score DESC,f.id LIMIT 1`, append([]any{id, a.models}, args...)...).Scan(&imageID, &box, &width, &height)
+	if errors.Is(err, sql.ErrNoRows) {
+		return bad(404, "No indexed face")
+	}
+	if err != nil {
+		return err
+	}
+	a.lib.lastRender.Store(time.Now().UnixNano())
+	p, err := a.lib.get(r.Context(), imageID)
+	if err != nil {
+		return err
+	}
+	data, err := a.lib.faceThumbnail(r.Context(), p, box, width, height)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private,max-age=300")
+	_, err = w.Write(data)
+	return err
+}
+
+type ranked struct {
+	ID    string
+	Score float32
+}
+type ranking []ranked
+
+func (h ranking) Len() int { return len(h) }
+func (h ranking) Less(i, j int) bool {
+	if h[i].Score == h[j].Score {
+		return h[i].ID > h[j].ID
+	}
+	return h[i].Score < h[j].Score
+}
+func (h ranking) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *ranking) Push(x any)   { *h = append(*h, x.(ranked)) }
+func (h *ranking) Pop() any     { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }
+func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
+	limit, err := intParam(r, "limit", 60, 1, 200)
+	if err != nil {
+		return err
+	}
+	offset, err := intParam(r, "offset", 0, 0, 1000)
+	if err != nil {
+		return err
+	}
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = "semantic"
+	}
+	if mode != "semantic" && mode != "metadata" {
+		return bad(400, "mode must be semantic or metadata")
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if utf8.RuneCountInString(q) > 500 {
+		return bad(400, "Query too long")
+	}
+	clause, args, err := a.playbackFilter(r, mode)
+	if err != nil {
+		return err
+	}
+	if mode == "metadata" || q == "" {
+		var total int
+		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
+			return err
+		}
+		rows, e := a.read.QueryContext(r.Context(), "SELECT metadata FROM catalog.images i WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		items := []Photo{}
+		for rows.Next() {
+			var raw string
+			var p Photo
+			if err = rows.Scan(&raw); err != nil {
+				return err
+			}
+			if err = json.Unmarshal([]byte(raw), &p); err != nil {
+				return err
+			}
+			items = append(items, p)
+		}
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "semantic": false})
+	}
+	selection, err := a.rankSelection(r.Context(), q, clause, args, offset+limit)
+	if err != nil {
+		return err
+	}
+	ordered, total := selection.Hits, selection.Total
+	items := []map[string]any{}
+	for _, hit := range ordered[min(offset, len(ordered)):] {
+		p, e := a.lib.get(r.Context(), hit.ID)
+		if e != nil {
+			continue
+		}
+		raw, _ := json.Marshal(p)
+		var item map[string]any
+		_ = json.Unmarshal(raw, &item)
+		item["similarity"] = hit.Score
+		items = append(items, item)
+	}
+	return writeJSON(w, 200, map[string]any{"items": items, "total": min(total, 1200), "indexed_candidates": total, "offset": offset, "semantic": true})
+}

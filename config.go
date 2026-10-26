@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 )
@@ -18,6 +19,31 @@ type Config struct {
 	CORSOrigins  []string `json:"cors_origins"`
 	FFmpeg       string   `json:"ffmpeg,omitempty"`
 	MaxPixels    int64    `json:"max_pixels"`
+	ML           MLConfig `json:"ml"`
+}
+
+type MLConfig struct {
+	URL            string  `json:"url"`
+	Enabled        bool    `json:"enabled"`
+	ClipModel      string  `json:"clip_model"`
+	FaceModel      string  `json:"face_model"`
+	IntervalMS     int     `json:"interval_ms"`
+	FaceSimilarity float32 `json:"face_similarity"`
+}
+
+func (c *MLConfig) defaults() {
+	if c.ClipModel == "" {
+		c.ClipModel = "ViT-B-32__openai"
+	}
+	if c.FaceModel == "" {
+		c.FaceModel = "buffalo_l"
+	}
+	if c.IntervalMS < 1000 {
+		c.IntervalMS = 2000
+	}
+	if c.FaceSimilarity == 0 {
+		c.FaceSimilarity = 0.6
+	}
 }
 
 func loadConfig(path string) (Config, error) {
@@ -37,6 +63,19 @@ func loadConfig(path string) (Config, error) {
 	}
 	if c.Host != "" && net.ParseIP(c.Host) == nil && c.Host != "localhost" {
 		return c, fmt.Errorf("host must be an IP address or localhost")
+	}
+	c.ML.defaults()
+	if c.ML.URL != "" {
+		u, e := url.Parse(c.ML.URL)
+		if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return c, fmt.Errorf("ml.url must be an HTTP(S) base URL")
+		}
+	}
+	if c.ML.Enabled && c.ML.URL == "" {
+		return c, fmt.Errorf("ml.url required when enabled")
+	}
+	if c.ML.FaceSimilarity < 0.1 || c.ML.FaceSimilarity > 0.99 {
+		return c, fmt.Errorf("ml.face_similarity must be between 0.1 and 0.99")
 	}
 	return c, nil
 }

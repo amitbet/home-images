@@ -12,6 +12,8 @@ Features:
 - Filesystem dates, original camera date/offset, EXIF properties, and GPS metadata.
 - Upright, resized JPEG previews, transparency composited over white, ETags, and original-file range requests.
 - Persistent SQLite index, background incremental scans, and literal text search across paths/metadata.
+- Embedded photo browser with content search and editable named face groups.
+- Optional remote Immich ML inference; no Docker or ML runtime required on this server.
 - Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews.
 - Bounded rendering concurrency/pixel counts, root-confined file handles, graceful shutdown, and rotating logs.
 
@@ -26,7 +28,8 @@ cp config.example.json config.json
 ./home-images --config /absolute/path/config.json
 ```
 
-Open `http://127.0.0.1:8372/docs` for endpoint documentation and links to try.
+Open `http://127.0.0.1:8372/` for the photo library, or `/docs` for the API reference.
+See [the web UI guide](UI.md) for browsing, curation, named people and frame/API links.
 
 Configuration:
 
@@ -208,18 +211,128 @@ restrict the port using your firewall. Do not expose directly to the internet.
 For an HTTPS dashboard, put the API behind an HTTPS or same-origin reverse proxy to
 avoid mixed-content blocking. An HTTP LAN dashboard can call the HTTP API directly.
 
-## Search and future indexing
+## Faces and content indexing
 
-`q` searches literal substrings of filenames, paths, and existing metadata. Unicode
-text is supported; `%` and `_` are literal, not SQL wildcards. It does not infer people,
-locations, or scene contents. Potential extensions:
+The native Go service can call an existing **Immich machine-learning container**
+directly over HTTP. The full Immich application, PostgreSQL, Docker and WSL are not
+needed on the image server. Add this section to `config.json`, then restart:
 
-- Manual labels in a separate annotations table; GPS reverse geocoding for cities/countries.
-- Integrate [Immich search](https://docs.immich.app/features/searching/) and
-  [named face groups](https://docs.immich.app/features/facial-recognition/), using
-  a [read-only external library](https://docs.immich.app/guides/external-library/).
-- A separate local embeddings/caption/face-clustering worker. Keep inference outside
-  the serving process so indexing does not interrupt slideshow playback.
+```json
+"ml": {
+  "enabled": true,
+  "url": "http://192.168.1.20:3003",
+  "clip_model": "ViT-B-32__openai",
+  "face_model": "buffalo_l",
+  "interval_ms": 2000,
+  "face_similarity": 0.6
+}
+```
+
+The Mac receives upright previews, returning CLIP content embeddings, face boxes
+and face embeddings. Pin its container version: `/predict` is an internal Immich
+protocol, not a versioned public API. The container downloads models on first use.
+Keep its unauthenticated port restricted to your trusted network.
+
+Indexing uses a separate `ai.sqlite3` WAL database and one throttled background
+worker. Preview decoding runs in a separate single-core process with a soft 256 MiB
+Go memory target and below-normal CPU priority on Windows. The worker waits while
+foreground rendering is active, never takes a foreground rendering slot, and holds
+no catalog connection while contacting the Mac. CPU, RAM and disk are still shared;
+this is bounded background work, not a guarantee of zero resource contention.
+
+Progress survives restarts. New or changed photos are queued automatically; changing
+models makes old results ineligible until recomputed. A Mac outage backs off for 30
+seconds. Undecodable files and invalid results are retried after an hour, or via the
+retry control. Pause/resume is persistent; an in-flight image finishes before pause.
+Do not delete `ai.sqlite3`: it also contains user-assigned people names and merges.
+Back up the entire data directory with the service stopped, including curation data.
+
+People are grouped conservatively using representative face-vector similarity.
+Name groups and merge duplicates in the People page. A higher `face_similarity`
+reduces automatic merging; changes apply to future indexing and do not recluster
+existing photos. Recognition can make mistakes, particularly with children, twins,
+blur, or unusual angles. Renaming changes a label; it does not retrain the model.
+
+Content search ranks photos by text/image similarity, e.g. "dog", "beach", or
+"birthday party". It **does not return verified object labels or object boxes**.
+Only indexed photos participate; even weak matches may appear in ranked results.
+An uncached query needs the Mac to encode the text. Previously cached queries,
+people filters, and ordinary browsing remain usable without the Mac.
+
+- `GET /api/search?mode=semantic&q=beach&person=12&limit=60&offset=0` returns ranked
+  photos, with optional person/directory filters. `mode=metadata` searches literal
+  path and EXIF text; an empty query browses the library. Offset is bounded at 1000.
+- `GET /api/people?q=Dana&limit=48&offset=0` lists groups, names and photo counts.
+- `POST /api/people/12` accepts `{"name":"Dana"}` or `{"merge_into":34}`.
+  Merges retain both representatives for future recognition and cannot be undone
+  through the UI. Separate people with the same name are still separate groups.
+- `GET /api/people/12/image` serves a face thumbnail.
+- `GET /api/images/IMAGE_ID/faces` returns groups and face boxes for that photo.
+- `GET /api/indexing` reports indexed/pending/failed counts and worker status.
+- `POST /api/indexing/control` accepts `{"action":"pause"}`, `resume`, or `retry`.
+
+### Playback of albums and search selections
+
+`GET /api/playback/next` serves the same top-level photo fields as `/api/next`,
+including `id`, `image_url`, `original_url`, dates and EXIF. It adds a `playback`
+object; existing photo clients can ignore the additional fields. Use the returned
+`id` as `after` for the next request. Each client maintains its own cursor.
+
+```text
+/api/playback/next?album=3&order=random
+/api/playback/next?album=3&order=sequential&after=PREVIOUS_IMAGE_ID
+/api/playback/next?mode=semantic&q=beach&person=12&order=sequential
+/api/playback/next?mode=metadata&q=Paris&favorite=true&order=random
+/api/playback/next?collection=7&order=sequential
+```
+
+- `order=random|sequential` defaults to `random`. Sequential wraps at the end;
+  random avoids the previous ID whenever another current match is available.
+- `mode=semantic|metadata` defaults to `semantic`. An empty `q` browses all photos
+  matching the filters, regardless of indexing progress. Metadata mode searches
+  paths/EXIF and annotation title, description, location and tags with literal
+  substring matching (`%` and `_` are not wildcards).
+- Filters: `person`, `album`, `favorite=true`, `hidden=only|all`, `directory`,
+  `recursive`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `place`, `tag`, and
+  `on_this_day=true`. Hidden photos are excluded by default. Person filters cover
+  indexed faces; ordinary album/favorite/folder playback requires no ML worker.
+- `collection=ID` loads a saved selection belonging to this photo root. Explicit
+  URL query keys override saved rules, including empty values to clear a filter.
+  The collection name and ID are never interpreted as SQL or file paths.
+- Metadata/empty-query playback covers the entire matching library in alphabetical
+  path order or uniform random order, with no candidate cap.
+- Semantic playback uses the top `pool_limit` matches (default **500**, range
+  **1–2000**). Sequential follows descending similarity; random samples from that
+  pool. These are ranked suggestions, with no claim that every match contains the
+  queried object. Only currently indexed photos participate.
+- Up to eight playback selections (metadata and semantic) are cached and refreshed
+  in the background after **120 seconds**, keyed by root, models, normalized filters
+  and API curation revision. Completed catalog scans also trigger refresh. Random
+  and sequential playback share a snapshot. Metadata snapshots keep every matching ID;
+  semantic snapshots retain the bounded ranked pool. Newly indexed matches join when it is
+  refreshed. Frames continue from the previous snapshot during refresh. A first-time
+  metadata query may scan the catalog; large libraries can take around 15 seconds.
+  Subsequent frames reuse IDs instead of repeating that scan. Every cached candidate is rechecked for current index signature,
+  filters, visibility and file availability. Curation changes invalidate the cache
+  immediately. `refresh=1` forces a rebuild for that request; do not send it on
+  every frame if you want caching.
+- `playback` always contains `mode` and `order`. Semantic responses also contain
+  top-level `similarity` and `playback.{pool_size,pool_limit,indexed_candidates,
+  cached_at,cache_seconds}`. IDs remain the cursor, not a mutable server session.
+- An empty selection returns HTTP **404**. A busy semantic search returns **429**;
+  retry after a short delay. An uncached text query with an unavailable Mac returns
+  **503**. Cached text embeddings allow local reranking without the Mac.
+
+The existing `/api/next?mode=random|sequential` remains compatible and now also
+accepts curation filters such as `album` and `favorite`. Use `/api/playback/next`
+for person filters, semantic search, or saved selections.
+
+Write requests require `Content-Type: application/json` and `X-Home-Images: 1`.
+Browser writes must be same-origin. The service still has no user authentication:
+all trusted-LAN clients able to reach it can view photos and edit labels.
+Existing `/api/images` and `/api/next` keep their literal metadata `q` behavior,
+now including user annotations.
+Automatic GPS-to-city reverse geocoding is not implemented.
 
 ## Verification and portability
 

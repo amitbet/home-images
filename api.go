@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -49,11 +50,14 @@ func (l *Library) Handler() http.Handler {
 		}
 	}
 	mux.HandleFunc("/health", wrap(l.health))
+	mux.Handle("/app/", http.StripPrefix("/app/", webHandler))
+	l.ai.routes(mux, wrap)
 	mux.HandleFunc("/api/directories", wrap(l.directories))
 	mux.HandleFunc("/api/images", wrap(l.images))
 	mux.HandleFunc("/api/next", wrap(l.next))
 	mux.HandleFunc("/api/images/{id}", wrap(l.imageMetadata))
 	mux.HandleFunc("/api/images/{id}/image", wrap(l.render))
+	mux.HandleFunc("/api/images/{id}/thumbnail", wrap(l.thumbnail))
 	mux.HandleFunc("/api/images/{id}/original", wrap(l.original))
 	mux.HandleFunc("/docs", wrap(func(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -64,8 +68,7 @@ func (l *Library) Handler() http.Handler {
 		if r.URL.Path != "/" {
 			return bad(404, "Not found")
 		}
-		http.Redirect(w, r, "/docs", http.StatusTemporaryRedirect)
-		return nil
+		return serveUI(w, r)
 	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -177,10 +180,11 @@ func (l *Library) selection(r *http.Request) (string, []any, error) {
 		return "", nil, bad(422, "q is too long")
 	}
 	if q != "" {
-		clause += " AND search LIKE ? ESCAPE '!'"
-		args = append(args, "%"+escapeLike(strings.ToLower(q))+"%")
+		pattern := "%" + escapeLike(strings.ToLower(q)) + "%"
+		clause += ` AND (search LIKE ? ESCAPE '!' OR id IN(SELECT image_id FROM curation.annotations WHERE root=? AND lower(title||' '||description||' '||location||' '||tags) LIKE ? ESCAPE '!'))`
+		args = append(args, pattern, l.rootPath, pattern)
 	}
-	return clause, args, nil
+	return l.curationSelection(r, clause, args)
 }
 func (l *Library) images(w http.ResponseWriter, r *http.Request) error {
 	clause, args, err := l.selection(r)
@@ -291,6 +295,7 @@ func (l *Library) original(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
+	l.lastRender.Store(time.Now().UnixNano())
 	width, err := intParam(r, "width", 1280, 32, 2560)
 	if err != nil {
 		return err
@@ -323,12 +328,6 @@ func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
 		w.WriteHeader(304)
 		return nil
 	}
-	select {
-	case l.renderSlots <- struct{}{}:
-		defer func() { <-l.renderSlots }()
-	case <-r.Context().Done():
-		return r.Context().Err()
-	}
 	data, err := l.jpeg(r.Context(), p, width, height, quality)
 	if err != nil {
 		return err
@@ -351,6 +350,10 @@ const apiDocs = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name
 <li><a href="/api/directories">GET /api/directories</a>?directory=ALBUM&amp;offset=0&amp;limit=100</li>
 <li><a href="/api/images?limit=5">GET /api/images</a>?directory=ALBUM&amp;recursive=true&amp;q=Paris&amp;offset=0&amp;limit=50</li>
 <li><a href="/api/next?mode=random">GET /api/next</a>?mode=random|sequential&amp;directory=ALBUM&amp;recursive=true&amp;after=PREVIOUS_ID&amp;q=Paris</li>
+<li><a href="/api/playback/next?order=random">GET /api/playback/next</a>?order=random|sequential&amp;mode=semantic|metadata&amp;q=beach&amp;person=12&amp;album=3&amp;collection=7&amp;after=PREVIOUS_ID — album/search playback; semantic pool defaults to top 500 matches, cached for 120 seconds.</li>
+<li><a href="/api/people">GET /api/people</a> — named face groups; POST /api/people/{id} with name or merge_into.</li>
+<li><a href="/api/indexing">GET /api/indexing</a> — AI progress; POST /api/indexing/control with action pause, resume or retry.</li>
+<li>GET/POST /api/curation/{id} — favorites, hidden state, title, description, location and tags. GET/POST /api/albums and /api/collections — virtual albums and saved search rules. Writes require JSON, X-Home-Images: 1 and same-origin browser requests.</li>
 <li>GET /api/images/{id} — metadata</li><li>GET /api/images/{id}/image?width=1280&amp;height=800&amp;quality=85 — upright JPEG</li>
 <li>GET /api/images/{id}/original — original file, including range requests</li></ul>
 <p>Selection returns metadata and relative <code>image_url</code>/<code>original_url</code>. Prefix those URLs with this API's origin.

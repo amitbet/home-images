@@ -1,0 +1,396 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Home Images · Your photo library</title>
+    <link rel="stylesheet" href="/app/style.css" />
+    <script src="/app/app.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Home Images"
+        ><span class="brand-icon" aria-hidden="true">▧</span
+        ><span>home images<small>A place for your memories</small></span></a
+      >
+      <p class="nav-label">YOUR LIBRARY</p>
+      <nav aria-label="Library">
+        <button class="nav active" data-view="photos">
+          <span>▦</span> All photos</button
+        ><button class="nav" data-view="favorites">
+          <span>♡</span> Favorites</button
+        ><button class="nav" data-view="people">
+          <span>♧</span> People
+          <span id="peopleBadge" class="badge">0</span></button
+        ><button class="nav" data-view="albums"><span>▱</span> Albums</button
+        ><button class="nav" data-view="memories">
+          <span>◷</span> On this day</button
+        ><button class="nav" data-view="hidden"><span>◌</span> Hidden</button>
+      </nav>
+      <div class="saved-heading">
+        <p class="nav-label">SAVED SELECTIONS</p>
+        <button
+          id="saveSelection"
+          class="icon-button"
+          aria-label="Save current selection"
+        >
+          +
+        </button>
+      </div>
+      <div id="savedSelections" class="saved-selections">
+        <p class="muted">Save a search for your frame.</p>
+      </div>
+      <section class="index-card" aria-label="Indexing status">
+        <div class="index-title">
+          <span id="workerDot" class="status-dot"></span
+          ><strong id="indexTitle">Connecting…</strong>
+        </div>
+        <p id="indexDetail">Checking your library</p>
+        <div class="progress"><div id="progressBar"></div></div>
+        <p id="indexCounts" class="index-counts"></p>
+        <button id="pause" class="text-button">Pause indexing</button
+        ><button id="retry" class="text-button" hidden>Retry failed</button>
+        <details>
+          <summary>Worker details</summary>
+          <p id="workerDetail"></p>
+          <p id="indexError" role="status"></p>
+        </details>
+      </section>
+      <div class="sidebar-links">
+        <a href="/api/curation/export" download>Export annotations ↗</a
+        ><a href="/docs">API reference ↗</a>
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div class="eyebrow">YOUR MOMENTS, ALL TOGETHER</div>
+        <div class="heading-row">
+          <div>
+            <h1 id="pageTitle">A lifetime of little moments.</h1>
+            <p id="pageSubtitle">
+              Find a familiar face. Rediscover a favorite place.
+            </p>
+          </div>
+          <span id="libraryCount" class="library-count">Your library</span>
+        </div>
+        <form id="searchForm" class="searchbar" role="search">
+          <span class="search-icon" aria-hidden="true">⌕</span
+          ><label class="sr-only" for="query">Search photos or people</label
+          ><input
+            id="query"
+            autocomplete="off"
+            placeholder="Try “family at the beach” or “a dog in the garden”…"
+          /><label class="sr-only" for="mode">Search type</label
+          ><select id="mode">
+            <option value="semantic">Content search</option>
+            <option value="metadata">Files & metadata</option></select
+          ><button class="primary" type="submit">Search ↗</button>
+        </form>
+        <div id="suggestions" class="suggestions">
+          <span>A LITTLE INSPIRATION</span
+          ><button data-query="a day at the beach">At the beach</button
+          ><button data-query="birthday celebration">Birthdays</button
+          ><button data-query="dogs and cats">Furry friends</button
+          ><button data-query="mountains and nature">The great outdoors</button>
+        </div>
+      </header>
+      <section class="toolbar">
+        <div class="toolbar-left">
+          <h2 id="resultsTitle">All photos</h2>
+          <span id="resultsCount" class="muted"></span
+          ><button id="clearPerson" class="person-filter" hidden></button>
+        </div>
+        <div class="toolbar-right">
+          <button id="newAlbum" class="secondary" hidden>+ New album</button
+          ><button
+            id="filtersToggle"
+            class="secondary"
+            aria-expanded="false"
+            aria-controls="filters"
+          >
+            Filters</button
+          ><button id="slideshow" class="secondary">▷ Slideshow</button
+          ><button
+            id="refresh"
+            class="icon-button"
+            aria-label="Refresh results"
+          >
+            ↻
+          </button>
+        </div>
+      </section>
+      <section id="filters" class="filters" hidden aria-label="Photo filters">
+        <div class="filter-field folder-field">
+          <label for="directory">Folder</label>
+          <div class="input-row">
+            <input id="directory" placeholder="All folders" /><button
+              id="browseFolders"
+              class="secondary"
+            >
+              Browse
+            </button>
+          </div>
+        </div>
+        <div class="filter-field">
+          <label for="dateFrom">Taken from</label
+          ><input id="dateFrom" type="date" />
+        </div>
+        <div class="filter-field">
+          <label for="dateTo">Until</label><input id="dateTo" type="date" />
+        </div>
+        <div class="filter-field">
+          <label for="place">Place label</label
+          ><input id="place" placeholder="e.g. Italy" />
+        </div>
+        <div class="filter-field">
+          <label for="tag">Tag</label
+          ><input id="tag" placeholder="e.g. holiday" />
+        </div>
+        <div class="filter-actions">
+          <button id="applyFilters" class="primary">Apply filters</button
+          ><button id="resetFilters" class="text-button">Reset</button>
+        </div>
+        <p class="filter-help">
+          Dates use camera metadata, falling back to file creation time. Place
+          labels are the locations you add in photo details.
+        </p>
+      </section>
+      <div id="folderList" class="folder-list" hidden></div>
+      <div id="activeFilters" class="active-filters"></div>
+      <section
+        id="selectionBar"
+        class="selection-bar"
+        hidden
+        aria-label="Selected photo actions"
+      >
+        <strong id="selectionCount"></strong
+        ><button id="favoriteSelected" class="secondary">♡ Favorite</button
+        ><button id="hideSelected" class="secondary">Hide from frame</button
+        ><select id="bulkAlbum" aria-label="Album for selected photos">
+          <option value="">Add to album…</option></select
+        ><button id="addSelected" class="secondary">Add</button
+        ><button id="clearSelection" class="text-button">Clear</button>
+      </section>
+      <p id="notice" class="notice" hidden role="status"></p>
+      <section
+        id="gallery"
+        class="gallery"
+        aria-label="Photo results"
+      ></section>
+      <section
+        id="people"
+        class="people-grid"
+        aria-label="People groups"
+        hidden
+      ></section>
+      <section
+        id="albums"
+        class="album-grid"
+        aria-label="Albums"
+        hidden
+      ></section>
+      <div id="empty" class="empty" hidden>
+        <span aria-hidden="true">▧</span>
+        <h2 id="emptyTitle">A little patience, a lot of memories.</h2>
+        <p id="emptyText">
+          Photos and people will appear as your library is indexed.
+        </p>
+      </div>
+      <div class="page-controls">
+        <button id="previous" class="secondary" hidden>← Previous</button
+        ><span id="pageLabel" class="muted"></span
+        ><button id="next" class="secondary" hidden>Next →</button>
+      </div>
+      <footer>
+        Made for rediscovering.
+        <span
+          >Originals stay untouched. Annotations stay with your library.</span
+        >
+      </footer>
+    </main>
+    <dialog id="viewer" class="viewer">
+      <div class="viewer-top">
+        <span id="viewerPosition"></span>
+        <div class="viewer-controls">
+          <label for="slideSeconds" class="sr-only">Seconds per photo</label
+          ><select id="slideSeconds" class="viewer-button">
+            <option value="8">8 seconds</option>
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option></select
+          ><button id="shuffle" class="viewer-button" aria-pressed="false">
+            Shuffle off</button
+          ><button id="play" class="viewer-button">▷ Play</button
+          ><button
+            id="fullscreen"
+            class="viewer-button"
+            aria-label="Toggle fullscreen"
+          >
+            ⛶</button
+          ><button
+            id="closeViewer"
+            class="viewer-button"
+            aria-label="Close image viewer"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div class="viewer-content">
+        <div class="viewer-photo">
+          <div class="viewer-stage">
+            <button
+              id="prevImage"
+              class="viewer-arrow"
+              aria-label="Previous image"
+            >
+              ‹</button
+            ><img id="fullImage" alt="" /><button
+              id="nextImage"
+              class="viewer-arrow"
+              aria-label="Next image"
+            >
+              ›
+            </button>
+          </div>
+          <div class="viewer-bottom">
+            <div>
+              <h2 id="imageName"></h2>
+              <p id="imageMeta"></p>
+              <div id="imagePeople" class="image-people"></div>
+            </div>
+            <div class="viewer-actions">
+              <button id="viewerFavorite" class="viewer-button">
+                ♡ Favorite</button
+              ><button
+                id="toggleDetails"
+                class="viewer-button"
+                aria-expanded="false"
+              >
+                Details</button
+              ><a
+                id="original"
+                class="viewer-button"
+                target="_blank"
+                rel="noopener"
+                >Original ↗</a
+              >
+            </div>
+          </div>
+        </div>
+        <aside id="detailsPanel" class="details-panel" hidden>
+          <form id="detailsForm">
+            <h2>A little more to the story.</h2>
+            <label for="photoTitle">Title</label
+            ><input id="photoTitle" maxlength="150" /><label
+              for="photoDescription"
+              >Description</label
+            ><textarea
+              id="photoDescription"
+              maxlength="1000"
+              rows="3"
+            ></textarea
+            ><label for="photoLocation">Place label</label
+            ><input
+              id="photoLocation"
+              maxlength="150"
+              placeholder="City, country, or a familiar place"
+            />
+            <p id="gpsDetail" class="muted"></p>
+            <label for="photoTags">Tags, separated by commas</label
+            ><input id="photoTags" placeholder="family, holiday" /><label
+              class="check-label"
+              ><input id="photoHidden" type="checkbox" /> Hide from slideshow
+              and main library</label
+            ><button class="primary" type="submit">Save details</button>
+            <p id="detailStatus" role="status"></p>
+          </form>
+          <hr />
+          <label for="photoAlbum">Add to album</label>
+          <div class="input-row">
+            <select id="photoAlbum"></select
+            ><button id="addToAlbum" class="viewer-button">Add</button>
+          </div>
+          <div id="photoAlbums" class="album-chips"></div>
+          <details>
+            <summary>File details</summary>
+            <pre id="fileDetails"></pre>
+          </details>
+        </aside>
+      </div>
+    </dialog>
+    <dialog id="personEditor" class="person-editor">
+      <form id="personForm">
+        <div class="eyebrow">PUT A NAME TO A FACE</div>
+        <h2>Someone you know?</h2>
+        <p>Name this group to find their photos anytime.</p>
+        <label for="personName">Name</label
+        ><input
+          id="personName"
+          maxlength="100"
+          placeholder="e.g. Dana"
+          autocomplete="off"
+        />
+        <div class="dialog-actions">
+          <button type="button" id="cancelPerson" class="secondary">
+            Cancel</button
+          ><button type="submit" class="primary">Save name</button>
+        </div>
+      </form>
+      <hr />
+      <h3>Same person, different group?</h3>
+      <label for="mergeSearch">Find the person to keep</label
+      ><input id="mergeSearch" placeholder="Search names" /><label
+        for="mergeTarget"
+        >Merge this group into</label
+      ><select id="mergeTarget">
+        <option value="">Choose a person…</option></select
+      ><button id="mergePerson" class="secondary">Merge groups</button>
+      <p id="editError" role="alert"></p>
+    </dialog>
+    <dialog id="nameDialog" class="person-editor">
+      <form id="nameForm">
+        <div class="eyebrow">MAKE IT YOURS</div>
+        <h2 id="nameDialogTitle">New album</h2>
+        <label for="entryName">Name</label
+        ><input id="entryName" maxlength="100" required autocomplete="off" />
+        <p id="nameError" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancelName" type="button" class="secondary">Cancel</button
+          ><button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="playbackDialog" class="person-editor playback-dialog">
+      <div class="eyebrow">READY FOR YOUR FRAME</div>
+      <h2>Play this selection.</h2>
+      <p>
+        Use the API in your Echo code, or open the slideshow link in a browser.
+      </p>
+      <label for="playbackOrder">Photo order</label
+      ><select id="playbackOrder">
+        <option value="random">Random</option>
+        <option value="sequential">Sequential</option></select
+      ><label for="apiURL">Next-photo API</label
+      ><textarea id="apiURL" rows="3" readonly></textarea
+      ><button id="copyApi" class="text-button">Copy API URL</button>
+      <p>
+        Each response includes the image ID, image URL, and metadata. Send its
+        ID as <code>after</code> on the next request. Sequential playback wraps;
+        random avoids an immediate repeat when possible.
+      </p>
+      <label for="frameURL">Browser slideshow</label
+      ><textarea id="frameURL" rows="3" readonly></textarea
+      ><button id="copyFrame" class="text-button">Copy slideshow URL</button>
+      <p>
+        Links use the hostname you opened this page with. Open Home Images using
+        its LAN address when configuring another device.
+      </p>
+      <div class="dialog-actions">
+        <button id="closePlayback" class="secondary">Done</button>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

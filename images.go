@@ -195,7 +195,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int) (output []byte, err error) {
+func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, quality int) (output []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("image decoder panic: %v", r)
@@ -220,7 +220,16 @@ func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int)
 		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		scale := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease", width, height)
-		cmd := exec.CommandContext(ctx, ffmpeg, "-nostdin", "-v", "error", "-i", fresh.AbsolutePath, "-frames:v", "1", "-vf", scale, "-map_metadata", "-1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", fmt.Sprint(2+(95-quality)*29/55), "pipe:1")
+		args := []string{"-nostdin", "-v", "error"}
+		if os.Getenv("HOME_IMAGES_AI_PREVIEW") == "1" {
+			args = append(args, "-threads", "1", "-filter_threads", "1")
+		}
+		args = append(args, "-i", fresh.AbsolutePath, "-frames:v", "1", "-vf", scale, "-map_metadata", "-1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", fmt.Sprint(2+(95-quality)*29/55))
+		if os.Getenv("HOME_IMAGES_AI_PREVIEW") == "1" {
+			args = append(args, "-threads", "1")
+		}
+		args = append(args, "pipe:1")
+		cmd := exec.CommandContext(ctx, ffmpeg, args...)
 		var out limitedBuffer
 		out.max = 32 << 20
 		cmd.Stdout = &out

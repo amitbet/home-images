@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -44,14 +45,19 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
-	config      Config
-	rootPath    string
-	root        *os.Root
-	db          *sql.DB
-	mu          sync.RWMutex
-	status      scanStatus
-	scanMu      sync.Mutex
-	renderSlots chan struct{}
+	config           Config
+	rootPath         string
+	root             *os.Root
+	db               *sql.DB
+	mu               sync.RWMutex
+	status           scanStatus
+	scanMu           sync.Mutex
+	renderSlots      chan struct{}
+	thumbnails       *thumbnailCache
+	previewDecoder   chan struct{}
+	isolateRendering bool
+	ai               *AI
+	lastRender       atomic.Int64
 }
 
 func newLibrary(c Config) (*Library, error) {
@@ -71,16 +77,14 @@ func newLibrary(c Config) (*Library, error) {
 		r.Close()
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(c.DataDir, "index-go.sqlite3"))
-	if err != nil {
-		r.Close()
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	l := &Library{config: c, rootPath: rootPath, root: r, db: db, renderSlots: make(chan struct{}, 2)}
+	db := openSQLite(filepath.Join(c.DataDir, "index-go.sqlite3"), map[string]string{
+		"curation": filepath.Join(c.DataDir, "curation.sqlite3"),
+	}, false)
+	l := &Library{config: c, rootPath: rootPath, root: r, db: db, renderSlots: make(chan struct{}, 2), thumbnails: newThumbnailCache(c.DataDir), previewDecoder: make(chan struct{}, 1)}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;
 CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,path TEXT UNIQUE NOT NULL,directory TEXT NOT NULL,signature TEXT NOT NULL,metadata TEXT NOT NULL,search TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS image_path ON images(path COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS image_order ON images(path COLLATE NOCASE,path,id,directory);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`)
 	if err != nil {
 		l.Close()
@@ -102,9 +106,20 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`)
 		l.Close()
 		return nil, err
 	}
+	l.ai, err = newAI(l)
+	if err != nil {
+		l.Close()
+		return nil, err
+	}
 	return l, nil
 }
-func (l *Library) Close()              { _ = l.db.Close(); _ = l.root.Close() }
+func (l *Library) Close() {
+	if l.ai != nil {
+		l.ai.Close()
+	}
+	_ = l.db.Close()
+	_ = l.root.Close()
+}
 func (l *Library) Status() scanStatus  { l.mu.RLock(); defer l.mu.RUnlock(); return l.status }
 func (l *Library) scanError(err error) { l.mu.Lock(); l.status.Errors++; l.mu.Unlock(); log.Print(err) }
 
@@ -161,6 +176,12 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	aiDone := make(chan struct{})
+	go func() { defer close(aiDone); l.ai.Run(ctx) }()
+	thumbnailDone := make(chan struct{})
+	go func() { defer close(thumbnailDone); l.warmThumbnails(ctx) }()
+	defer func() { <-thumbnailDone }()
+	defer func() { <-aiDone }()
 	l.Scan(ctx)
 	ticker := time.NewTicker(time.Duration(l.config.ScanInterval) * time.Second)
 	defer ticker.Stop()

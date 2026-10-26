@@ -31,6 +31,7 @@ func (p *program) Start(service.Service) error {
 	if err != nil {
 		return err
 	}
+	l.isolateRendering = true
 	listener, err := net.Listen("tcp", net.JoinHostPort(p.config.Host, fmt.Sprint(p.config.Port)))
 	if err != nil {
 		l.Close()
@@ -88,7 +89,15 @@ func main() {
 	userService := flag.Bool("user-service", false, "Install a per-user Linux/macOS daemon")
 	showVersion := flag.Bool("version", false, "Print version")
 	importIndex := flag.String("import-python-index", "", "One-time read-only import of a previous Python SQLite index")
+	aiPreview := flag.String("ai-preview", "", "Internal: generate an indexing preview using config on stdin")
 	flag.Parse()
+	if *aiPreview != "" {
+		if err := runAIPreview(*aiPreview); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *showVersion {
 		fmt.Println(version)
 		return
