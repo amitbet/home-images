@@ -354,8 +354,8 @@
       <label for="mergeSearch">Search groups to add to this person</label>
       <input id="mergeSearch" placeholder="Search names" />
       <div id="mergeResults" class="merge-results"></div>
-      </details><div class="merge-review-footer"><p id="mergeSelectionCount" aria-live="polite">No groups selected</p>
-      <button id="mergePerson" class="primary" disabled>Review selected groups</button></div>
+      </details><div class="merge-review-footer"><div class="merge-footer-status"><p id="mergeFooterOutcome" role="status" hidden></p><p id="mergeSelectionCount" aria-live="polite">No groups selected</p></div>
+      <div class="merge-footer-actions"><button id="doneMergeReview" type="button" class="secondary">Done</button><button id="mergePerson" class="primary" disabled>Review selected groups</button></div></div>
       <div id="singleFaceTarget" hidden><label for="mergeTarget">Move face to</label><select id="mergeTarget"></select></div>
       <p id="editError" role="alert"></p>
     </dialog>
@@ -366,6 +366,13 @@
       <p>Available groups will be merged. Groups that changed will be skipped and listed afterward. You can undo merges one group at a time.</p>
       <p id="mergeConfirmError" role="alert"></p>
       <div class="dialog-actions"><button id="cancelMergeConfirm" class="secondary">Back</button><button id="confirmMergeGroups" class="primary">Confirm merge</button></div>
+    </dialog>
+    <dialog id="mergeResult" class="person-editor" aria-labelledby="mergeResultTitle" aria-describedby="mergeResultPerson">
+      <h2 id="mergeResultTitle">Merge complete</h2>
+      <p id="mergeResultPerson"></p>
+      <div id="mergeResultDetails" class="merge-outcome"></div>
+      <p>Continue reviewing to return to the remaining matches, or choose Done to finish.</p>
+      <div class="dialog-actions"><button id="continueMergeReview" type="button" class="secondary">Continue reviewing</button><button id="finishMergeReview" type="button" class="primary" autofocus>Done</button></div>
     </dialog>
     <dialog id="personActionConfirm" class="person-editor" aria-labelledby="personActionTitle">
       <h2 id="personActionTitle">Confirm change</h2><p id="personActionMessage"></p>

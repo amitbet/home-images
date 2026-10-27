@@ -916,6 +916,7 @@ async function editPerson(p) {
   $("personName").value = p.name || "";
   $("editError").textContent = "";
   $("mergeOutcome").hidden=true;$("mergeOutcome").replaceChildren();
+  $("mergeFooterOutcome").hidden=true;$("mergeFooterOutcome").textContent="";
   $("mergeSearch").value = "";
   modal("personEditor");
   $("personName").focus();
@@ -982,20 +983,27 @@ $("confirmMergeGroups").onclick = async () => {
     const failed=result.failed||[];
     const summary=`${result.merged} groups merged${result.already_merged?`, ${result.already_merged} already merged`:""}${failed.length?`, ${failed.length} skipped`:""}.`;
     const outcome=$("mergeOutcome");outcome.hidden=false;outcome.replaceChildren(text("strong",summary));
+    $("mergeFooterOutcome").textContent=summary;$("mergeFooterOutcome").hidden=false;
     if(failed.length){
       const list=document.createElement("ul");
       for(const group of failed){const item=document.createElement("li");item.append(text("span",`${group.name?group.name+" (group "+group.id+")":"Person "+group.id}: ${group.reason}`));if(group.current_person_id){const link=text("a"," Open current group");link.href=`/?person=${group.current_person_id}`;link.target="_blank";link.rel="noopener";item.append(link);}list.append(item);}
       const details=document.createElement("details");details.open=true;details.append(text("summary","Skipped groups and reasons"),list);outcome.append(details);
       outcome.scrollIntoView({block:"center"});
     }
-    toast(summary+" Keep reviewing or choose Done.");
+    $("mergeResultTitle").textContent=failed.length ? "Merge finished with skipped groups" : result.merged ? "Merge complete" : "Groups already merged";
+    $("mergeResultPerson").textContent=`Into ${state.editing.name || "Person " + state.editing.id}`;
+    $("mergeResultDetails").replaceChildren(...[...outcome.childNodes].map(node=>node.cloneNode(true)));
+    modal("mergeResult");
+    $("finishMergeReview").focus();
   } catch (e) { $("mergeConfirmError").textContent = e.message; }
   finally { button.disabled = false;button.textContent=originalLabel;$("mergeConfirm").setAttribute("aria-busy","false"); $("cancelMergeConfirm").disabled = false; }
 };
 $("mergeConfirm").addEventListener("cancel", e => {
   if ($("confirmMergeGroups").disabled) e.preventDefault();
 });
-$("cancelPerson").onclick = () => closeModal("personEditor");
+$("cancelPerson").onclick = $("doneMergeReview").onclick = () => closeModal("personEditor");
+$("continueMergeReview").onclick = () => closeModal("mergeResult");
+$("finishMergeReview").onclick = () => {closeModal("mergeResult");closeModal("personEditor");};
 $("personEditor").addEventListener("close",()=>{
   suggestionController?.abort();
   suggestionGeneration++;
