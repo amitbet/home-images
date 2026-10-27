@@ -277,11 +277,17 @@ func nonNil(b []byte) []byte {
 	return b
 }
 
+// Only use recorded capture years; file creation dates can describe an import instead.
+const personTakenYearSQL = `CASE WHEN substr(i.taken_at,1,4) GLOB '[0-9][0-9][0-9][0-9]' AND CAST(substr(i.taken_at,1,4) AS INTEGER) BETWEEN 1 AND 9999 THEN CAST(substr(i.taken_at,1,4) AS INTEGER) END`
+const personYearRangeSQL = `,coalesce(min(` + personTakenYearSQL + `),0),coalesce(max(` + personTakenYearSQL + `),0)`
+
 type personSummary struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Count    int    `json:"photo_count"`
-	ImageURL string `json:"image_url"`
+	FirstYear int    `json:"first_year,omitempty"`
+	LastYear  int    `json:"last_year,omitempty"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Count     int    `json:"photo_count"`
+	ImageURL  string `json:"image_url"`
 }
 
 func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
@@ -306,7 +312,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	base += " AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND " + visible + ")"
 	args = append(args, visibilityArgs...)
 	var total int
-	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id", args...)
+	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+personYearRangeSQL+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id", args...)
 	if err != nil {
 		return err
 	}
@@ -314,7 +320,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	items := []personSummary{}
 	for rows.Next() {
 		var p personSummary
-		if err = rows.Scan(&p.ID, &p.Name, &p.Count); err != nil {
+		if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
 			return err
 		}
 		total++

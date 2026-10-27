@@ -1590,11 +1590,26 @@ dialog::backdrop {
 #personEditor #personForm {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 #personEditor #personForm h2 {flex-basis:100%;}
 #personEditor #personName {max-width:320px;}
-#personEditor #personSuggestions {display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
-#personEditor #personSuggestions .face-suggestion {display:flex;flex-direction:column;align-items:stretch;flex-wrap:nowrap;padding:14px;border:1px solid var(--line);border-radius:12px;}
-#personEditor #personSuggestions img {width:112px;height:112px;align-self:center;}
-#personEditor #personSuggestions .face-suggestion > div {min-width:0;}
-#personEditor #personSuggestions .face-suggestion .merge-choice {padding:8px 0;}
+#personEditor #personSuggestions, #personEditor #mergeResults {display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;}
+.person-editor .merge-card, #personEditor #personSuggestions .merge-card {
+  position:relative;display:flex;flex-direction:column;align-items:stretch;flex-wrap:nowrap;
+  gap:7px;padding:12px 10px 8px;border:1px solid var(--line);border-radius:12px;
+  background:var(--surface);transition:border-color .15s,box-shadow .15s;
+}
+.person-editor .merge-card:hover {border-color:var(--line-strong);box-shadow:var(--shadow);}
+.person-editor .merge-card.selected {background:var(--accent-soft);border-color:var(--accent);outline:1px solid var(--accent);}
+.person-editor .merge-card img, #personEditor #personSuggestions .merge-card img {width:88px;height:88px;align-self:center;border-radius:10px;}
+.person-editor .merge-card > .merge-card-info {min-width:0;flex:1;text-align:center;}
+.merge-card-info > strong, .merge-card-info > a {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:21px;}
+.person-editor .merge-card p {display:inline;margin:0;color:var(--muted);font-size:12px;}
+.merge-years {display:inline-block;margin-left:5px;padding:1px 5px;border-radius:4px;background:var(--sunken);color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;}
+.merge-card-info small {display:block;color:var(--muted);font-size:11px;line-height:18px;}
+.person-editor .merge-card .merge-choice, #personEditor #personSuggestions .merge-card .merge-choice {
+  position:absolute;left:3px;top:3px;display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;margin:0;border-radius:7px;background:var(--surface);
+}
+.person-editor .merge-card .merge-choice input {width:18px;height:18px;margin:0;accent-color:var(--accent);cursor:pointer;}
+.merge-choice:focus-within {outline:2px solid var(--accent);outline-offset:1px;}
+.person-editor .merge-card .dismiss-match {align-self:center;padding:2px 6px;min-height:26px;font-size:12px;}
 #personEditor .merge-review-footer {position:sticky;bottom:-28px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 4px;background:var(--surface);border-top:1px solid var(--line);z-index:5;}
 #personEditor #moreSuggestions {margin:18px 0;}
 #personEditor #manualMergeSearch {margin-top:20px;}
@@ -1609,3 +1624,12 @@ dialog::backdrop {
 
 .merge-outcome {padding:14px;margin:12px 0;border:1px solid var(--line);border-radius:10px;background:var(--sunken);}
 .merge-outcome li {margin:6px 0;overflow-wrap:anywhere;}
+
+#personEditor #personForm h2 {margin:0 0 4px;}
+#personEditor #personForm .dialog-actions {margin:0;}
+#personEditor > hr {margin:12px 0;}
+#personEditor .merge-help {margin:6px 0 10px;color:var(--muted);font-size:13px;}
+#personEditor .merge-toolbar {display:flex;align-items:center;gap:12px;margin:0 0 10px;}
+#personEditor #suggestionProgress {flex:1;margin:0;color:var(--muted);font-size:12px;line-height:1.5;}
+#personEditor #selectAllSuggestions {flex-shrink:0;min-height:34px;padding:5px 10px;font-size:13px;}
+@media(max-width:600px){#personEditor .merge-toolbar{align-items:flex-start;flex-wrap:wrap;gap:6px;}#personEditor #suggestionProgress{flex-basis:100%;}}

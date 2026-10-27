@@ -341,13 +341,12 @@
       </section>
       <button id="undoMerge" class="secondary" hidden>Undo latest merge</button>
       <p id="undoNote" hidden>Restores the original groups. Faces indexed since the merge stay in their current group.</p>
-      <h3>Same person, different group?</h3>
+      <h3>Possible matches</h3>
       <img id="reviewPortrait" width="88" height="88" alt="Current face group" />
       <section id="mergeOutcome" class="merge-outcome" role="status" hidden></section>
-      <h4>Possible matches</h4>
-      <p>Review these groups before merging. Similarity is a suggestion, not a confirmed identity.</p>
-      <button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all matches</button>
-      <p id="suggestionProgress" aria-live="polite"></p>
+      <p class="merge-help">Review before merging. Similarity suggests a match; it does not confirm identity. Years show the group's photo capture dates.</p>
+      <div class="merge-toolbar"><button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all matches</button>
+      <p id="suggestionProgress" aria-live="polite"></p></div>
       <div id="personSuggestions" aria-live="polite"></div>
       <button id="refreshSuggestions" class="secondary" type="button" hidden>Search again using merged groups</button>
       <button id="moreSuggestions" class="secondary" type="button" hidden>Show 25 more matches</button>

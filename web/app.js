@@ -861,17 +861,24 @@ function mergeChoice(person) {
     else mergeSelection.delete(person.id);
     updateMergeSelection();
   };
-  label.append(input, text("span", "Select group"));
+  input.setAttribute("aria-label", `Select ${person.name || "Person " + person.id} for merge`);
+  label.title = input.getAttribute("aria-label");
+  label.append(input);
   return label;
 }
 function mergeGroupRow(person) {
-  const row = text("article", "", "face-suggestion");
+  const row = text("article", "", "face-suggestion merge-card");
   const image = new Image();
   previewImage(image, person.image_url || `/api/people/${person.id}/image`);
   image.alt = person.name || `Person ${person.id}`;
-  image.width = image.height = 72; image.loading = "lazy";
-  const info = text("div");
-  info.append(text("strong", image.alt), text("p", `${person.photo_count} photos`));
+  image.width = image.height = 88; image.loading = "lazy";
+  const info = text("div", "", "merge-card-info");
+  const years = person.first_year
+    ? person.first_year === person.last_year ? `${person.first_year}` : `${person.first_year}\u2013${person.last_year}`
+    : "Year unknown";
+  const year = text("span", years, "merge-years");
+  year.title = "Years taken (from photo capture dates)";
+  info.append(text("strong", image.alt), text("p", `${person.photo_count} photos`), year);
   row.append(image, info, mergeChoice(person));
   return row;
 }
@@ -2064,8 +2071,9 @@ function appendSuggestionPage() {
     const link = text("a", name.textContent);
     link.href=`/?person=${candidate.id}`;link.target="_blank";link.rel="noopener";name.replaceWith(link);
     const score = text("small",`${Math.round(candidate.similarity*100)}% similarity`);
-    row.querySelector("div").append(score);
-    const dismiss=text("button","Not the same person","text-button");
+    row.querySelector(".merge-card-info").append(score);
+    const dismiss=text("button","Not a match","text-button dismiss-match");
+    dismiss.setAttribute("aria-label", `${candidate.name || "Person " + candidate.id} is not the same person`);
     dismiss.onclick=async()=>{
       dismiss.disabled=true;
       try {await api(`/api/people/${person.id}/dismiss`,{other:candidate.id});
