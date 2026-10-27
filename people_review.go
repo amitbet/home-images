@@ -38,6 +38,14 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	// Bound CPU-heavy searches independently from image-serving connections.
+	select {
+	case a.suggestionSlot <- struct{}{}:
+		defer func() { <-a.suggestionSlot }()
+	case <-r.Context().Done():
+		return r.Context().Err()
+	}
+
 	rows, err := a.read.QueryContext(r.Context(), `SELECT coalesce(merged_into,id),embedding FROM people WHERE model=?`, a.lib.config.ML.FaceModel)
 	if err != nil {
 		return err
@@ -66,7 +74,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	}
 	args := []any{id, a.models, id, id, id}
 	args = append(args, visibilityArgs...)
-	rows, err = a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
+	rows, err = a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
 	if err != nil {
 		return err
 	}
@@ -77,7 +85,20 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
 			return err
 		}
+
+		items = append(items, p)
+	}
+	err = rows.Err()
+	rows.Close() // Release SQLite before the CPU-heavy ranking pass.
+	if err != nil {
+		return err
+	}
+	ranked := items[:0]
+	for _, p := range items {
 		for _, v := range vectors[id] {
+			if err := r.Context().Err(); err != nil {
+				return err
+			}
 			for _, other := range vectors[p.ID] {
 				if score := similarity(v, other); score > p.Similarity {
 					p.Similarity = score
@@ -88,11 +109,10 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 			continue
 		}
 		p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
-		items = append(items, p)
+		ranked = append(ranked, p)
 	}
-	if err = rows.Err(); err != nil {
-		return err
-	}
+	items = ranked
+
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Similarity == items[j].Similarity {
 			return items[i].ID < items[j].ID

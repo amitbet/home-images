@@ -40,6 +40,7 @@ type AI struct {
 	textCache         map[string]vector
 	groupCache        map[string]photoGroupSummary
 	searchSlot        chan struct{}
+	suggestionSlot    chan struct{}
 	playMu            sync.Mutex
 	playCache         map[string]playSelection
 	selectionRevision atomic.Uint64
@@ -51,7 +52,7 @@ type AI struct {
 
 func newAI(l *Library) (*AI, error) {
 	l.config.ML.defaults()
-	a := &AI{lib: l, ml: newML(l.config.ML), models: l.config.ML.ClipModel + "|" + l.config.ML.FaceModel, textCache: map[string]vector{}, searchSlot: make(chan struct{}, 1)}
+	a := &AI{lib: l, ml: newML(l.config.ML), models: l.config.ML.ClipModel + "|" + l.config.ML.FaceModel, textCache: map[string]vector{}, searchSlot: make(chan struct{}, 1), suggestionSlot: make(chan struct{}, 1)}
 	a.refreshCtx, a.refreshCancel = context.WithCancel(context.Background())
 	var err error
 	attachments := map[string]string{

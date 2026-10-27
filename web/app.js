@@ -997,6 +997,7 @@ $("mergeConfirm").addEventListener("cancel", e => {
 });
 $("cancelPerson").onclick = () => closeModal("personEditor");
 $("personEditor").addEventListener("close",()=>{
+  suggestionController?.abort();
   suggestionGeneration++;
   if(mergeGridDirty){mergeGridDirty=false;void load();}
 });
@@ -2092,7 +2093,10 @@ function updateSuggestionProgress(){
 }
 $("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
 $("moreSuggestions").onclick=appendSuggestionPage;
+let suggestionController;
 async function loadPersonSuggestions(person) {
+  suggestionController?.abort();
+  const controller = suggestionController = new AbortController();
   $("reviewPortrait").src=person.image_url||`/api/people/${person.id}/image`;
   const container=$("personSuggestions");
   const generation=++suggestionGeneration;
@@ -2106,12 +2110,12 @@ async function loadPersonSuggestions(person) {
   try {
     // One ranked snapshot avoids shifting pages while indexing/dismissals run.
     // Reveal 25 at a time; only revealed portraits are requested.
-    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0`);
+    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0`, undefined, controller.signal);
     if(state.editing.id!==person.id||generation!==suggestionGeneration)return;
     suggestionPool=result.items;container.replaceChildren();
     if(!suggestionPool.length)container.textContent="No more groups to review. You can search by name below.";
     appendSuggestionPage();
-  }catch(e){if(state.editing.id===person.id&&generation===suggestionGeneration)container.textContent=e.message;}
+  }catch(e){if(e.name!=="AbortError"&&state.editing.id===person.id&&generation===suggestionGeneration)container.textContent=e.message;}
   finally {if(generation===suggestionGeneration)container.setAttribute("aria-busy","false");}
 }
 

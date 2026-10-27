@@ -51,6 +51,7 @@ type Library struct {
 	rootPath         string
 	root             *os.Root
 	db               *sql.DB
+	read             *sql.DB // Foreground reads never queue behind catalog maintenance.
 	mu               sync.RWMutex
 	status           scanStatus
 	scanMu           sync.Mutex
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	// Cover grouping/autocomplete fields without scanning compressed metadata pages.
-	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
 		l.Close()
 		return nil, err
 	}
@@ -127,6 +128,8 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	l.read = openSQLite(filepath.Join(c.DataDir, "index-go.sqlite3"), map[string]string{"curation": filepath.Join(c.DataDir, "curation.sqlite3")}, true)
+	l.read.SetMaxOpenConns(4)
 	l.ai, err = newAI(l)
 	if err != nil {
 		l.Close()
@@ -137,6 +140,9 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 func (l *Library) Close() {
 	if l.ai != nil {
 		l.ai.Close()
+	}
+	if l.read != nil {
+		_ = l.read.Close()
 	}
 	_ = l.db.Close()
 	_ = l.root.Close()
@@ -344,7 +350,7 @@ func (l *Library) Scan(ctx context.Context) {
 func imageID(path string) string { s := sha256.Sum256([]byte(path)); return hex.EncodeToString(s[:12]) }
 func (l *Library) get(ctx context.Context, id string) (Photo, error) {
 	var encoded string
-	err := l.db.QueryRowContext(ctx, "SELECT metadata_json(metadata) FROM images WHERE id=?", id).Scan(&encoded)
+	err := l.read.QueryRowContext(ctx, "SELECT metadata_json(metadata) FROM images WHERE id=?", id).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, bad(404, "Unknown image")
 	}

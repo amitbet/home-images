@@ -303,7 +303,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 100 {
 		return bad(400, "Name query too long")
 	}
-	base := ` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error='' AND p.merged_into IS NULL AND p.name LIKE ? ESCAPE '!'`
+	base := ` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error='' AND p.merged_into IS NULL AND p.name LIKE ? ESCAPE '!'`
 	args := []any{a.models, "%" + escapeLike(q) + "%"}
 	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
 	if err != nil {
@@ -409,7 +409,7 @@ func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	err = a.read.QueryRowContext(r.Context(), `SELECT f.image_id,f.box,f.width,f.height FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE f.person_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) ORDER BY f.score DESC,f.id LIMIT 1`, append([]any{id, a.models}, args...)...).Scan(&imageID, &box, &width, &height)
+	err = a.read.QueryRowContext(r.Context(), `SELECT f.image_id,f.box,f.width,f.height FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE f.person_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) ORDER BY f.score DESC,f.id LIMIT 1`, append([]any{id, a.models}, args...)...).Scan(&imageID, &box, &width, &height)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bad(404, "No indexed face")
 	}

@@ -105,7 +105,7 @@ func intParam(r *http.Request, key string, def, min, max int) (int, error) {
 }
 func (l *Library) health(w http.ResponseWriter, r *http.Request) error {
 	var count int
-	if err := l.db.QueryRowContext(r.Context(), "SELECT count(*) FROM images").Scan(&count); err != nil {
+	if err := l.read.QueryRowContext(r.Context(), "SELECT count(*) FROM images").Scan(&count); err != nil {
 		return err
 	}
 	status := l.Status()
@@ -204,10 +204,10 @@ func (l *Library) images(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var count int
-	if err = l.db.QueryRowContext(r.Context(), "SELECT count(*) FROM images WHERE "+clause, args...).Scan(&count); err != nil {
+	if err = l.read.QueryRowContext(r.Context(), "SELECT count(*) FROM images WHERE "+clause, args...).Scan(&count); err != nil {
 		return err
 	}
-	rows, err := l.db.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := l.read.QueryContext(r.Context(), "SELECT metadata_json(metadata) FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return err
 	}
@@ -244,22 +244,22 @@ func (l *Library) next(w http.ResponseWriter, r *http.Request) error {
 	after := r.URL.Query().Get("after")
 	var id string
 	if mode == "random" {
-		err = l.db.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" AND id != ? ORDER BY random() LIMIT 1", append(args, after)...).Scan(&id)
+		err = l.read.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" AND id != ? ORDER BY random() LIMIT 1", append(args, after)...).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			err = l.db.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" LIMIT 1", args...).Scan(&id)
+			err = l.read.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" LIMIT 1", args...).Scan(&id)
 		}
 	} else {
 		var previous string
-		previousErr := l.db.QueryRowContext(r.Context(), "SELECT path FROM images WHERE id=?", after).Scan(&previous)
+		previousErr := l.read.QueryRowContext(r.Context(), "SELECT path FROM images WHERE id=?", after).Scan(&previous)
 		if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
 			return previousErr
 		}
 		err = sql.ErrNoRows
 		if previousErr == nil {
-			err = l.db.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" AND (path COLLATE NOCASE,path) > (?,?) ORDER BY path COLLATE NOCASE,path LIMIT 1", append(args, previous, previous)...).Scan(&id)
+			err = l.read.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" AND (path COLLATE NOCASE,path) > (?,?) ORDER BY path COLLATE NOCASE,path LIMIT 1", append(args, previous, previous)...).Scan(&id)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			err = l.db.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT 1", args...).Scan(&id)
+			err = l.read.QueryRowContext(r.Context(), "SELECT id FROM images WHERE "+clause+" ORDER BY path COLLATE NOCASE,path LIMIT 1", args...).Scan(&id)
 		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
