@@ -160,7 +160,7 @@ type mergeSnapshot struct {
 	Aliases    []int64        `json:"aliases"`
 }
 
-func rememberMerge(tx *sql.Tx, source, target int64) error {
+func rememberMerge(tx *sql.Tx, source, target int64, captured ...*mergeSnapshot) error {
 	snap := mergeSnapshot{Source: source, Target: target}
 	if err := tx.QueryRow("SELECT name FROM people WHERE id=?", source).Scan(&snap.Name); err != nil {
 		return err
@@ -216,6 +216,12 @@ func rememberMerge(tx *sql.Tx, source, target int64) error {
 	}
 	if err := collect("SELECT id FROM people WHERE merged_into=?", &snap.Aliases); err != nil {
 		return err
+	}
+	// Bulk merges capture each source without repeatedly serializing the growing
+	// undo chain or writing it to SQLite. The caller saves the final chain once.
+	if len(captured) > 0 {
+		*captured[0] = snap
+		return nil
 	}
 	blob, err := json.Marshal(snap)
 	if err != nil {

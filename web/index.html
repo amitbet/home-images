@@ -343,6 +343,7 @@
       <p id="undoNote" hidden>Restores the original groups. Faces indexed since the merge stay in their current group.</p>
       <h3>Same person, different group?</h3>
       <img id="reviewPortrait" width="88" height="88" alt="Current face group" />
+      <section id="mergeOutcome" class="merge-outcome" role="status" hidden></section>
       <h4>Possible matches</h4>
       <p>Review these groups before merging. Similarity is a suggestion, not a confirmed identity.</p>
       <button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all matches</button>
@@ -363,7 +364,7 @@
       <h2 id="mergeConfirmTitle">Merge selected groups?</h2>
       <p id="mergeKeepName"></p>
       <div id="mergeConfirmGroups"></div>
-      <p>All selected faces will belong to this person. You can undo merges one group at a time.</p>
+      <p>Available groups will be merged. Groups that changed will be skipped and listed afterward. You can undo merges one group at a time.</p>
       <p id="mergeConfirmError" role="alert"></p>
       <div class="dialog-actions"><button id="cancelMergeConfirm" class="secondary">Back</button><button id="confirmMergeGroups" class="primary">Confirm merge</button></div>
     </dialog>

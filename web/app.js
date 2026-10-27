@@ -908,6 +908,7 @@ async function editPerson(p) {
   loadMergeUndo(p);
   $("personName").value = p.name || "";
   $("editError").textContent = "";
+  $("mergeOutcome").hidden=true;$("mergeOutcome").replaceChildren();
   $("mergeSearch").value = "";
   modal("personEditor");
   $("personName").focus();
@@ -948,11 +949,15 @@ $("cancelMergeConfirm").onclick = () => closeModal("mergeConfirm");
 $("confirmMergeGroups").onclick = async () => {
   const button = $("confirmMergeGroups");
   button.disabled = true;
+  const originalLabel=button.textContent;
+  button.textContent=`Merging ${mergeSelection.size} groups...`;
+  $("mergeConfirm").setAttribute("aria-busy","true");
   $("cancelMergeConfirm").disabled = true;
   try {
     const result = await api(`/api/people/${state.editing.id}/merge-many`, { sources: [...mergeSelection.keys()] });
-    if (state.person && mergeSelection.has(state.person.id)) state.person = { ...state.editing };
-    const mergedIds=new Set(mergeSelection.keys());
+    const mergedIds=new Set([...(result.merged_ids||[]),...(result.already_merged_ids||[])]);
+    if (state.person && mergedIds.has(state.person.id)) state.person = { ...state.editing };
+    const handledIds=new Set([...mergedIds,...(result.failed||[]).map(p=>p.id)]);
     closeModal("mergeConfirm");
     mergeSelection.clear();
     for(const id of mergedIds) document.querySelector(`.person-card[data-person="${id}"]`)?.remove();
@@ -960,16 +965,25 @@ $("confirmMergeGroups").onclick = async () => {
     $("mergeResults").replaceChildren();
     state.mergeCandidates=[];
     refreshStatus();loadMergeUndo(state.editing);
-    const removedFromShown=suggestionPool.slice(0,suggestionShown).filter(p=>mergedIds.has(p.id)).length;
-    suggestionPool=suggestionPool.filter(p=>!mergedIds.has(p.id));
+    const removedFromShown=suggestionPool.slice(0,suggestionShown).filter(p=>handledIds.has(p.id)).length;
+    suggestionPool=suggestionPool.filter(p=>!handledIds.has(p.id));
     suggestionShown-=removedFromShown;
-    suggestedGroups=suggestedGroups.filter(p=>!mergedIds.has(p.id));
-    for(const input of document.querySelectorAll("#personSuggestions input[data-merge-group]")) if(mergedIds.has(Number(input.dataset.mergeGroup))) input.closest(".face-suggestion").remove();
+    suggestedGroups=suggestedGroups.filter(p=>!handledIds.has(p.id));
+    for(const input of document.querySelectorAll("#personSuggestions input[data-merge-group]")) if(handledIds.has(Number(input.dataset.mergeGroup))) input.closest(".face-suggestion").remove();
     $("refreshSuggestions").hidden=false;
     updateSuggestionProgress();updateMergeSelection();
-    toast(`${result.merged} groups merged. Keep reviewing this person or choose Done.`);
+    const failed=result.failed||[];
+    const summary=`${result.merged} groups merged${result.already_merged?`, ${result.already_merged} already merged`:""}${failed.length?`, ${failed.length} skipped`:""}.`;
+    const outcome=$("mergeOutcome");outcome.hidden=false;outcome.replaceChildren(text("strong",summary));
+    if(failed.length){
+      const list=document.createElement("ul");
+      for(const group of failed){const item=document.createElement("li");item.append(text("span",`${group.name?group.name+" (group "+group.id+")":"Person "+group.id}: ${group.reason}`));if(group.current_person_id){const link=text("a"," Open current group");link.href=`/?person=${group.current_person_id}`;link.target="_blank";link.rel="noopener";item.append(link);}list.append(item);}
+      const details=document.createElement("details");details.open=true;details.append(text("summary","Skipped groups and reasons"),list);outcome.append(details);
+      outcome.scrollIntoView({block:"center"});
+    }
+    toast(summary+" Keep reviewing or choose Done.");
   } catch (e) { $("mergeConfirmError").textContent = e.message; }
-  finally { button.disabled = false; $("cancelMergeConfirm").disabled = false; }
+  finally { button.disabled = false;button.textContent=originalLabel;$("mergeConfirm").setAttribute("aria-busy","false"); $("cancelMergeConfirm").disabled = false; }
 };
 $("mergeConfirm").addEventListener("cancel", e => {
   if ($("confirmMergeGroups").disabled) e.preventDefault();

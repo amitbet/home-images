@@ -509,11 +509,15 @@ counts. Folder and year grouping use covering indexes and unpack only page metad
 People merge review uses a wide workspace with 25 candidates per batch. A ranked
 snapshot of up to 1,000 candidates is fetched once, so selections persist and pages
 do not shift during review. Additional batches reveal lower-similarity candidates;
-users must review matches before confirming. Up to 500 groups can be merged in one
-atomic operation. The workspace stays open after merging; the People grid refreshes
+users must review matches before confirming. Up to 500 groups can be selected per batch. Stale groups are skipped and reported;
+valid groups commit together, and already-completed sources are safe to retry. The workspace stays open after merging; the People grid refreshes
 when review is finished. Names can also be searched in the expandable section.
 
 Face-tag visibility is controlled from both the grid toolbar and image viewer,
 with a shared saved preference. Viewer overlays are recalculated after zoom/reset.
 Merge review and confirmation show the number of distinct visible source images,
 so overlapping group memberships are counted once.
+
+Bulk merging indexes alias lookups and writes the complete undo chain once per
+batch. Completion reports identify skipped source groups and their current person
+where available. A storage error still rolls back all newly merged valid sources.

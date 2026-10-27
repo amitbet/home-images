@@ -105,13 +105,16 @@ func TestBulkMergeAtomicAndUndo(t *testing.T) {
 		ids = append(ids, id)
 	}
 	path := "/api/people/" + fmtID(ids[0]) + "/merge-many"
-	if code := postTest(t, s, path, `{"sources":[`+fmtID(ids[1])+`,999999]}`); code != 404 {
-		t.Fatal("expected stale selection rejection", code)
+	if code := postTest(t, s, path, `{"sources":[`+fmtID(ids[1])+`,999999]}`); code != 200 {
+		t.Fatal("expected valid groups to survive a stale selection", code)
 	}
 	var count int
 	l.ai.db.QueryRow("SELECT count(*) FROM people WHERE merged_into IS NOT NULL").Scan(&count)
-	if count != 0 {
-		t.Fatal("partial merge committed")
+	if count != 1 {
+		t.Fatal("valid group was not merged", count)
+	}
+	if postTest(t, s, "/api/people/undo", `{"source":`+fmtID(ids[1])+`,"target":`+fmtID(ids[0])+`}`) != 200 {
+		t.Fatal("undo partial batch")
 	}
 	if code := postTest(t, s, path, `{"sources":[`+fmtID(ids[1])+`,`+fmtID(ids[2])+`]}`); code != 200 {
 		t.Fatal("bulk merge", code)

@@ -540,7 +540,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, 200, map[string]any{"items": items, "total": min(total, 1200), "indexed_candidates": total, "offset": offset, "semantic": true})
 }
 
-func mergePersonGroups(tx *sql.Tx, id, target int64, model string) (err error) {
+func mergePersonGroups(tx *sql.Tx, id, target int64, model string, captured ...*mergeSnapshot) (err error) {
 
 	if target == id {
 		return bad(400, "Choose a different group")
@@ -554,7 +554,7 @@ func mergePersonGroups(tx *sql.Tx, id, target int64, model string) (err error) {
 	if model != targetModel {
 		return bad(400, "Groups from different face models cannot be merged")
 	}
-	if err = rememberMerge(tx, id, target); err != nil {
+	if err = rememberMerge(tx, id, target, captured...); err != nil {
 		return err
 	}
 	// Carry negative matches to the surviving group in either direction.
@@ -577,7 +577,15 @@ func mergePersonGroups(tx *sql.Tx, id, target int64, model string) (err error) {
 	return nil
 }
 
-// All selected groups merge together or none do; history retains each source.
+// Merge valid selected groups in one transaction. Stale selections are reported
+// individually; already-completed sources make retries safe after timeouts.
+type mergeFailure struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Reason        string `json:"reason"`
+	CurrentPerson int64  `json:"current_person_id,omitempty"`
+}
+
 func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 	target, err := personID(r)
 	if err != nil {
@@ -589,49 +597,74 @@ func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > 500 {
 		return bad(400, "Select between 1 and 500 groups")
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	seen := map[int64]bool{}
-	var previous *mergeSnapshot
 	for _, source := range body.Sources {
 		if source < 1 || source == target || seen[source] {
 			return bad(400, "Choose distinct groups other than the person to keep")
 		}
 		seen[source] = true
-		var model string
-		if err = tx.QueryRowContext(r.Context(), "SELECT model FROM people WHERE id=? AND merged_into IS NULL", source).Scan(&model); errors.Is(err, sql.ErrNoRows) {
-			return bad(404, "A selected group no longer exists; refresh and try again")
+	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var targetModel string
+	if err = tx.QueryRowContext(r.Context(), "SELECT model FROM people WHERE id=? AND merged_into IS NULL", target).Scan(&targetModel); errors.Is(err, sql.ErrNoRows) {
+		return bad(409, "The destination group changed. Choose the current person before merging.")
+	} else if err != nil {
+		return err
+	}
+	merged, already := []int64{}, []int64{}
+	failed := []mergeFailure{}
+	var previous *mergeSnapshot
+	for _, source := range body.Sources {
+		var model, name, parentName string
+		var parent int64
+		err = tx.QueryRowContext(r.Context(), "SELECT p.model,p.name,coalesce(p.merged_into,0),coalesce(parent.name,'') FROM people p LEFT JOIN people parent ON parent.id=p.merged_into WHERE p.id=?", source).Scan(&model, &name, &parent, &parentName)
+		if errors.Is(err, sql.ErrNoRows) {
+			failed = append(failed, mergeFailure{ID: source, Reason: "Group no longer exists"})
+			continue
 		} else if err != nil {
 			return err
 		}
-		if err = mergePersonGroups(tx, source, target, model); err != nil {
-			return err
+		if parent == target {
+			already = append(already, source)
+			continue
 		}
-		var raw string
-		if err = tx.QueryRow("SELECT value FROM ai_settings WHERE key='merge_undo'").Scan(&raw); err != nil {
-			return err
+		if parent != 0 {
+			if parentName == "" {
+				parentName = fmt.Sprintf("Person %d", parent)
+			}
+			failed = append(failed, mergeFailure{ID: source, Name: name, Reason: "Already merged into " + parentName, CurrentPerson: parent})
+			continue
+		}
+		if model != targetModel {
+			failed = append(failed, mergeFailure{ID: source, Name: name, Reason: "Group uses a different face model"})
+			continue
 		}
 		var snapshot mergeSnapshot
-		if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		if err = mergePersonGroups(tx, source, target, model, &snapshot); err != nil {
 			return err
 		}
 		snapshot.Previous = previous
 		previous = &snapshot
-		blob, e := json.Marshal(snapshot)
+		merged = append(merged, source)
+	}
+	// A retry with no new work must preserve the successful batch's undo history.
+	if previous != nil {
+		blob, e := json.Marshal(previous)
 		if e != nil {
 			return e
 		}
-		if _, err = tx.Exec("UPDATE ai_settings SET value=? WHERE key='merge_undo'", string(blob)); err != nil {
+		if _, err = tx.ExecContext(r.Context(), "INSERT OR REPLACE INTO ai_settings(key,value) VALUES('merge_undo',?)", string(blob)); err != nil {
 			return err
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	return writeJSON(w, 200, map[string]any{"ok": true, "merged": len(body.Sources), "target": target})
+	return writeJSON(w, 200, map[string]any{"ok": true, "merged": len(merged), "merged_ids": merged, "already_merged": len(already), "already_merged_ids": already, "failed": failed, "target": target})
 }
 
 // Only allow known expressions and directions; unknown values never reach SQL.

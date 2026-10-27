@@ -1606,3 +1606,6 @@ dialog::backdrop {
 #personEditor #reviewPortrait {position:absolute;right:28px;top:28px;border-radius:50%;object-fit:cover;}
 #personEditor h3,#personEditor h4 {margin-top:14px;margin-bottom:6px;}
 @media(max-width:600px){#personEditor #personForm{padding-right:0;}#personEditor #reviewPortrait{position:static;width:64px;height:64px;}}
+
+.merge-outcome {padding:14px;margin:12px 0;border:1px solid var(--line);border-radius:10px;background:var(--sunken);}
+.merge-outcome li {margin:6px 0;overflow-wrap:anywhere;}
