@@ -129,3 +129,29 @@ func TestGroupedUnassignedPaging(t *testing.T) {
 		}
 	}
 }
+
+func TestYearGroupsFollowDateSortDirection(t *testing.T) {
+	l, s, _ := fixture(t)
+	first := testJob(t, l, "a.jpg")
+	second := testJob(t, l, "b.jpg")
+	unknown := testJob(t, l, "album_100%/c.jpg")
+	l.db.Exec("DELETE FROM images WHERE id NOT IN(?,?,?)", first.ID, second.ID, unknown.ID)
+	l.db.Exec("UPDATE images SET taken_at='2020-06-01',created_at=NULL WHERE id=?", first.ID)
+	l.db.Exec("UPDATE images SET taken_at='2024-06-01',created_at=NULL WHERE id=?", second.ID)
+	l.db.Exec("UPDATE images SET taken_at=NULL,created_at=NULL WHERE id=?", unknown.ID)
+	for _, tc := range []struct {
+		direction string
+		ids       []string
+	}{{"asc", []string{first.ID, second.ID, unknown.ID}}, {"desc", []string{second.ID, first.ID, unknown.ID}}, {"asc", []string{first.ID, second.ID, unknown.ID}}} {
+		for offset, want := range tc.ids {
+			var result struct {
+				Items []groupedPhoto
+				Total int
+			}
+			path := fmt.Sprintf("/api/search?group_by=year&sort=taken_at&direction=%s&limit=1&offset=%d", tc.direction, offset)
+			if getJSON(t, s, path, &result) != 200 || result.Total != 3 || len(result.Items) != 1 || result.Items[0].ID != want {
+				t.Fatal(path, result)
+			}
+		}
+	}
+}

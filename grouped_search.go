@@ -226,6 +226,15 @@ func (a *AI) simpleGroupedSearch(w http.ResponseWriter, r *http.Request, clause 
 		return err
 	}
 	groupOrder := key + " COLLATE NOCASE," + order
+	if kind == "year" {
+		direction := "ASC"
+		if r.URL.Query().Get("direction") == "desc" {
+			direction = "DESC"
+		}
+		// Group boundaries precede the photo sort, so their direction must
+		// agree too. Missing dates stay at the end in either direction.
+		groupOrder = "CASE WHEN " + key + "='Unknown year' THEN 1 ELSE 0 END," + key + " COLLATE NOCASE " + direction + "," + order
+	}
 	if kind == "empty_tag" {
 		groupOrder = order
 	}
