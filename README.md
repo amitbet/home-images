@@ -505,3 +505,10 @@ People/tag group counts are cached for at most 15 seconds across pages (up to
 eight filter selections); manual edits invalidate them immediately. Page contents
 still apply current visibility and source-signature checks. `refresh=1` rebuilds
 counts. Folder and year grouping use covering indexes and unpack only page metadata.
+
+People merge review uses a wide workspace with 25 candidates per batch. A ranked
+snapshot of up to 1,000 candidates is fetched once, so selections persist and pages
+do not shift during review. Additional batches reveal lower-similarity candidates;
+users must review matches before confirming. Up to 500 groups can be merged in one
+atomic operation. The workspace stays open after merging; the People grid refreshes
+when review is finished. Names can also be searched in the expandable section.

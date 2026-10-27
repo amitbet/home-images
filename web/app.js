@@ -803,6 +803,9 @@ function selectPerson(p) {
 }
 const mergeSelection = new Map();
 let suggestedGroups = [];
+let suggestionPool = [];
+let suggestionShown = 0;
+let mergeGridDirty = false;
 let suggestionGeneration = 0;
 $("selectAllSuggestions").onclick = () => {
   const allSelected = suggestedGroups.every(p => mergeSelection.has(p.id));
@@ -814,9 +817,10 @@ $("selectAllSuggestions").onclick = () => {
 };
 function updateMergeSelection() {
   $("selectAllSuggestions").disabled = !suggestedGroups.length;
-  $("selectAllSuggestions").textContent = suggestedGroups.length && suggestedGroups.every(p => mergeSelection.has(p.id)) ? "Deselect all matches" : "Select all matches";
+  $("selectAllSuggestions").textContent = suggestedGroups.length && suggestedGroups.every(p => mergeSelection.has(p.id)) ? "Clear displayed selections" : "Select all displayed";
   $("mergeSelectionCount").textContent = mergeSelection.size ? `${mergeSelection.size} groups selected` : "No groups selected";
-  $("mergePerson").disabled = !mergeSelection.size;
+  $("mergePerson").disabled = !mergeSelection.size || mergeSelection.size > 500;
+  $("refreshSuggestions").disabled=!!mergeSelection.size;
   for (const input of document.querySelectorAll("input[data-merge-group]")) {
     input.checked = mergeSelection.has(Number(input.dataset.mergeGroup));
     input.closest(".face-suggestion").classList.toggle("selected", input.checked);
@@ -884,7 +888,8 @@ async function editPerson(p) {
   $("mergeSearch").value = "";
   modal("personEditor");
   $("personName").focus();
-  mergeOptions();
+  if(p.face_id) mergeOptions();
+  $("manualMergeSearch").open = !!p.face_id;
   loadPersonSuggestions(p);
 }
 $("mergeSearch").oninput = () => {
@@ -923,10 +928,22 @@ $("confirmMergeGroups").onclick = async () => {
   try {
     const result = await api(`/api/people/${state.editing.id}/merge-many`, { sources: [...mergeSelection.keys()] });
     if (state.person && mergeSelection.has(state.person.id)) state.person = { ...state.editing };
+    const mergedIds=new Set(mergeSelection.keys());
     closeModal("mergeConfirm");
-    closeModal("personEditor");
-    await load(); refreshStatus();
-    toast(`${result.merged} groups merged`);
+    mergeSelection.clear();
+    for(const id of mergedIds) document.querySelector(`.person-card[data-person="${id}"]`)?.remove();
+    mergeGridDirty=true;
+    $("mergeResults").replaceChildren();
+    state.mergeCandidates=[];
+    refreshStatus();loadMergeUndo(state.editing);
+    const removedFromShown=suggestionPool.slice(0,suggestionShown).filter(p=>mergedIds.has(p.id)).length;
+    suggestionPool=suggestionPool.filter(p=>!mergedIds.has(p.id));
+    suggestionShown-=removedFromShown;
+    suggestedGroups=suggestedGroups.filter(p=>!mergedIds.has(p.id));
+    for(const input of document.querySelectorAll("#personSuggestions input[data-merge-group]")) if(mergedIds.has(Number(input.dataset.mergeGroup))) input.closest(".face-suggestion").remove();
+    $("refreshSuggestions").hidden=false;
+    updateSuggestionProgress();updateMergeSelection();
+    toast(`${result.merged} groups merged. Keep reviewing this person or choose Done.`);
   } catch (e) { $("mergeConfirmError").textContent = e.message; }
   finally { button.disabled = false; $("cancelMergeConfirm").disabled = false; }
 };
@@ -934,6 +951,10 @@ $("mergeConfirm").addEventListener("cancel", e => {
   if ($("confirmMergeGroups").disabled) e.preventDefault();
 });
 $("cancelPerson").onclick = () => closeModal("personEditor");
+$("personEditor").addEventListener("close",()=>{
+  suggestionGeneration++;
+  if(mergeGridDirty){mergeGridDirty=false;void load();}
+});
 async function refreshStatus() {
   try {
     const s = await api("/api/indexing");
@@ -1980,49 +2001,60 @@ document.addEventListener("visibilitychange", () => {
     acquireWakeLock();
 });
 
-async function loadPersonSuggestions(person) {
-  $("reviewPortrait").src = person.image_url || `/api/people/${person.id}/image`;
+function appendSuggestionPage() {
+  const person = state.editing;
   const container = $("personSuggestions");
-  const generation = ++suggestionGeneration;
-  suggestedGroups = [];
+  const batch = suggestionPool.slice(suggestionShown, suggestionShown + 25);
+  suggestionShown += batch.length;
+  for (const candidate of batch) {
+    if (suggestedGroups.some(p => p.id === candidate.id)) continue;
+    suggestedGroups.push(candidate);
+    const row = mergeGroupRow(candidate);
+    const name = row.querySelector("strong");
+    const link = text("a", name.textContent);
+    link.href=`/?person=${candidate.id}`;link.target="_blank";link.rel="noopener";name.replaceWith(link);
+    const score = text("small",`${Math.round(candidate.similarity*100)}% similarity`);
+    row.querySelector("div").append(score);
+    const dismiss=text("button","Not the same person","text-button");
+    dismiss.onclick=async()=>{
+      dismiss.disabled=true;
+      try {await api(`/api/people/${person.id}/dismiss`,{other:candidate.id});
+        if(state.editing.id!==person.id)return;
+        mergeSelection.delete(candidate.id);suggestedGroups=suggestedGroups.filter(p=>p.id!==candidate.id);row.remove();updateMergeSelection();loadMergeUndo(person);
+      }catch(e){$("editError").textContent=e.message;dismiss.disabled=false;}
+    };
+    row.append(dismiss);container.append(row);
+  }
+  updateSuggestionProgress();
   updateMergeSelection();
-  container.setAttribute("aria-busy", "true");
-  const loading = text("div", "", "suggestions-loading");
-  const spinner = text("span", "", "loading-spinner");
-  spinner.setAttribute("aria-hidden", "true");
-  loading.setAttribute("role", "status");
-  loading.append(spinner, text("span", "Searching for similar groups..."));
-  container.replaceChildren(loading);
+}
+function updateSuggestionProgress(){
+  $("moreSuggestions").hidden=suggestionShown>=suggestionPool.length;
+  $("suggestionProgress").textContent=`Showing ${suggestionShown} ranked groups. Select matches, then show more until the choices no longer look right. Up to 500 groups per merge.`;
+}
+$("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
+$("moreSuggestions").onclick=appendSuggestionPage;
+async function loadPersonSuggestions(person) {
+  $("reviewPortrait").src=person.image_url||`/api/people/${person.id}/image`;
+  const container=$("personSuggestions");
+  const generation=++suggestionGeneration;
+  suggestedGroups=[];suggestionPool=[];suggestionShown=0;
+  $("refreshSuggestions").hidden=true;
+  $("moreSuggestions").hidden=true;$("suggestionProgress").textContent="";updateMergeSelection();
+  container.setAttribute("aria-busy","true");
+  const loading=text("div","","suggestions-loading");loading.setAttribute("role","status");
+  const spinner=text("span","","loading-spinner");spinner.setAttribute("aria-hidden","true");
+  loading.append(spinner,text("span","Searching for similar groups..."));container.replaceChildren(loading);
   try {
-    const result = await api(`/api/people/${person.id}/suggestions`);
-    if (state.editing.id !== person.id || generation !== suggestionGeneration) return;
-    suggestedGroups = result.items;
-    updateMergeSelection();
-    container.replaceChildren();
-    if (!result.items.length) container.textContent = "No suggested matches yet. You can still search for a group below.";
-    for (const candidate of result.items) {
-      const row = text("article", "", "face-suggestion");
-      const image = document.createElement("img");
-      previewImage(image, candidate.image_url); image.alt = candidate.name || `Person ${candidate.id}`;
-      image.width = image.height = 72; image.loading = "lazy";
-      const info = document.createElement("div");
-      const link = text("a", candidate.name || `Person ${candidate.id}`);
-      link.href = `/?person=${candidate.id}`; link.target = "_blank"; link.rel = "noopener";
-      info.append(link, text("p", `${candidate.photo_count} photos`));
-      const choose = mergeChoice(candidate);
-      const dismiss = text("button", "Not the same person", "text-button");
-      dismiss.onclick = async () => {
-        dismiss.disabled = true;
-        try { await api(`/api/people/${person.id}/dismiss`, {other:candidate.id}); mergeSelection.delete(candidate.id); suggestedGroups = suggestedGroups.filter(p => p.id !== candidate.id); row.remove(); updateMergeSelection();
-          if (!container.children.length) container.textContent = "No more suggested matches.";
-          loadMergeUndo(person);
-        } catch(e) { $("editError").textContent=e.message; dismiss.disabled=false; }
-      };
-      row.append(image, info, choose, dismiss); container.append(row);
-      updateMergeSelection();
-    }
-  } catch(e) { if (state.editing.id === person.id && generation === suggestionGeneration) container.textContent=e.message; }
-  finally { if (generation === suggestionGeneration) container.setAttribute("aria-busy", "false"); }
+    // One ranked snapshot avoids shifting pages while indexing/dismissals run.
+    // Reveal 25 at a time; only revealed portraits are requested.
+    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0`);
+    if(state.editing.id!==person.id||generation!==suggestionGeneration)return;
+    suggestionPool=result.items;container.replaceChildren();
+    if(!suggestionPool.length)container.textContent="No more groups to review. You can search by name below.";
+    appendSuggestionPage();
+  }catch(e){if(state.editing.id===person.id&&generation===suggestionGeneration)container.textContent=e.message;}
+  finally {if(generation===suggestionGeneration)container.setAttribute("aria-busy","false");}
 }
 
 function confirmPersonAction(message) {

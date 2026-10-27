@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -21,6 +22,22 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	limit, err := intParam(r, "limit", 25, 1, 1000)
+	if err != nil {
+		return err
+	}
+	offset, err := intParam(r, "offset", 0, 0, 100000)
+	if err != nil {
+		return err
+	}
+	minScore := float64(.3)
+	if raw := r.URL.Query().Get("min_score"); raw != "" {
+		minScore, err = strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(minScore) || minScore < 0 || minScore > 1 {
+			return bad(400, "Invalid minimum similarity")
+		}
+	}
+
 	rows, err := a.read.QueryContext(r.Context(), `SELECT coalesce(merged_into,id),embedding FROM people WHERE model=?`, a.lib.config.ML.FaceModel)
 	if err != nil {
 		return err
@@ -67,7 +84,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 		}
-		if p.Similarity < 0.3 {
+		if float64(p.Similarity) < minScore {
 			continue
 		}
 		p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
@@ -82,10 +99,9 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		}
 		return items[i].Similarity > items[j].Similarity
 	})
-	if len(items) > 12 {
-		items = items[:12]
-	}
-	return writeJSON(w, 200, map[string]any{"items": items})
+	total := len(items)
+	items = items[min(offset, total):min(offset+limit, total)]
+	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total})
 }
 
 func (a *AI) dismissPerson(w http.ResponseWriter, r *http.Request) error {

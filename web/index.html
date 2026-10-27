@@ -318,9 +318,9 @@
         </aside>
       </div>
     </dialog>
-    <dialog id="personEditor" class="person-editor">
+    <dialog id="personEditor" class="person-editor merge-workspace">
       <form id="personForm">
-        <h2>Name this person</h2>
+        <h2>Review and merge face groups</h2>
         <label for="personName">Name</label
         ><input
           id="personName"
@@ -330,7 +330,7 @@
         />
         <div class="dialog-actions">
           <button type="button" id="cancelPerson" class="secondary">
-            Cancel</button
+            Done</button
           ><button type="submit" class="primary">Save name</button>
         </div>
       </form>
@@ -346,13 +346,16 @@
       <h4>Possible matches</h4>
       <p>Review these groups before merging. Similarity is a suggestion, not a confirmed identity.</p>
       <button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all matches</button>
+      <p id="suggestionProgress" aria-live="polite"></p>
       <div id="personSuggestions" aria-live="polite"></div>
-      <h4>Find another group</h4>
+      <button id="refreshSuggestions" class="secondary" type="button" hidden>Search again using merged groups</button>
+      <button id="moreSuggestions" class="secondary" type="button" hidden>Show 25 more matches</button>
+      <details id="manualMergeSearch"><summary>Find another group by name</summary><h4>Find another group</h4>
       <label for="mergeSearch">Search groups to add to this person</label>
       <input id="mergeSearch" placeholder="Search names" />
       <div id="mergeResults" class="merge-results"></div>
-      <p id="mergeSelectionCount" aria-live="polite">No groups selected</p>
-      <button id="mergePerson" class="primary" disabled>Review selected groups</button>
+      </details><div class="merge-review-footer"><p id="mergeSelectionCount" aria-live="polite">No groups selected</p>
+      <button id="mergePerson" class="primary" disabled>Review selected groups</button></div>
       <div id="singleFaceTarget" hidden><label for="mergeTarget">Move face to</label><select id="mergeTarget"></select></div>
       <p id="editError" role="alert"></p>
     </dialog>

@@ -1585,3 +1585,24 @@ dialog::backdrop {
 
 .photo-group-heading {grid-column:1 / -1;margin:1rem 0 .25rem;font-size:1.2rem;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding-bottom:.5rem;}
 .gallery.list-view .photo-group-heading {width:100%;}
+
+#personEditor.merge-workspace {width: min(1440px,96vw);max-width:96vw;height:94dvh;max-height:94dvh;box-sizing:border-box;}
+#personEditor #personForm {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+#personEditor #personForm h2 {flex-basis:100%;}
+#personEditor #personName {max-width:320px;}
+#personEditor #personSuggestions {display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+#personEditor #personSuggestions .face-suggestion {display:flex;flex-direction:column;align-items:stretch;flex-wrap:nowrap;padding:14px;border:1px solid var(--line);border-radius:12px;}
+#personEditor #personSuggestions img {width:112px;height:112px;align-self:center;}
+#personEditor #personSuggestions .face-suggestion > div {min-width:0;}
+#personEditor #personSuggestions .face-suggestion .merge-choice {padding:8px 0;}
+#personEditor .merge-review-footer {position:sticky;bottom:-28px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 4px;background:var(--surface);border-top:1px solid var(--line);z-index:5;}
+#personEditor #moreSuggestions {margin:18px 0;}
+#personEditor #manualMergeSearch {margin-top:20px;}
+#mergeConfirm {width:min(1000px,94vw);}
+#mergeConfirmGroups {display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;}
+@media(max-width:600px){#personEditor.merge-workspace{padding:16px;}#personEditor #personSuggestions{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}#personEditor #personSuggestions .face-suggestion{padding:8px;}#personEditor .merge-review-footer{bottom:-16px;}}
+
+#personEditor #personForm {padding-right:120px;}
+#personEditor #reviewPortrait {position:absolute;right:28px;top:28px;border-radius:50%;object-fit:cover;}
+#personEditor h3,#personEditor h4 {margin-top:14px;margin-bottom:6px;}
+@media(max-width:600px){#personEditor #personForm{padding-right:0;}#personEditor #reviewPortrait{position:static;width:64px;height:64px;}}

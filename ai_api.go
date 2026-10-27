@@ -585,8 +585,8 @@ func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
 		Sources []int64 `json:"sources"`
 	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > 100 {
-		return bad(400, "Select between 1 and 100 groups")
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > 500 {
+		return bad(400, "Select between 1 and 500 groups")
 	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {

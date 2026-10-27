@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -127,5 +128,66 @@ func TestBulkMergeAtomicAndUndo(t *testing.T) {
 	l.ai.db.QueryRow("SELECT count(*) FROM people WHERE merged_into IS NULL").Scan(&count)
 	if count != 3 {
 		t.Fatal("undo did not restore all groups", count)
+	}
+}
+
+func TestSuggestionPagesBeyondFirstBatch(t *testing.T) {
+	l, s, _ := fixture(t)
+	j := testJob(t, l, "a.jpg")
+	if err := l.ai.save(context.Background(), j, syntheticPrediction()); err != nil {
+		t.Fatal(err)
+	}
+	var target int64
+	if err := l.ai.db.QueryRow("SELECT person_id FROM faces WHERE image_id=?", j.ID).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	v, err := parseVector([]byte(`"[1,0,0]"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for n := 0; n < 55; n++ {
+		imageID := fmt.Sprintf("candidate-%03d", n)
+		if _, err = l.db.Exec("INSERT INTO images(id,path,directory,signature,metadata,search) SELECT ?,?,'','test',metadata,search FROM images WHERE id=?", imageID, imageID+".jpg", j.ID); err != nil {
+			t.Fatal(err)
+		}
+		person, err := l.ai.db.Exec("INSERT INTO people(model,embedding) VALUES(?,?)", l.config.ML.FaceModel, v.blob())
+		if err != nil {
+			t.Fatal(err)
+		}
+		personID, _ := person.LastInsertId()
+		if _, err = l.ai.db.Exec("INSERT INTO ai_images(image_id,signature,models,clip,error,retry_at,updated_at) VALUES(?,'test',?,?,'',0,'now')", imageID, l.ai.models, v.blob()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = l.ai.db.Exec("INSERT INTO faces(image_id,person_id,box,score,width,height,embedding) VALUES(?,?,'{}',.9,100,100,?)", imageID, personID, v.blob()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[int64]bool{}
+	for page, want := range []int{25, 25, 5} {
+		var result struct {
+			Items   []personSuggestion
+			Total   int
+			HasMore bool `json:"has_more"`
+		}
+		url := fmt.Sprintf("/api/people/%d/suggestions?limit=25&offset=%d&min_score=0", target, page*25)
+		if getJSON(t, s, url, &result) != 200 || len(result.Items) != want || result.Total != 55 || result.HasMore != (page < 2) {
+			t.Fatal(url, result)
+		}
+		for _, p := range result.Items {
+			if seen[p.ID] {
+				t.Fatal("duplicate page result", p.ID)
+			}
+			seen[p.ID] = true
+		}
+	}
+	if len(seen) != 55 {
+		t.Fatal("lost candidates", len(seen))
+	}
+	for _, query := range []string{"limit=0", "offset=-1", "min_score=NaN", "min_score=2"} {
+		var result map[string]any
+		status := getJSON(t, s, fmt.Sprintf("/api/people/%d/suggestions?%s", target, query), &result)
+		if status < 400 || status >= 500 {
+			t.Fatal(query, status)
+		}
 	}
 }
