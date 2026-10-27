@@ -115,6 +115,23 @@ func (a *AI) groupedSearch(w http.ResponseWriter, r *http.Request, clause string
 		a.groupCache[cacheKey] = photoGroupSummary{groups: groups, unique: unique, total: total, created: time.Now()}
 		a.mu.Unlock()
 	}
+	// Cache membership counts, not a direction-specific slice. Copy before sorting
+	// so concurrent requests and direction changes cannot mutate cached order.
+	groups = append([]photoGroup(nil), groups...)
+	descending := r.URL.Query().Get("direction") == "desc"
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].key == fallbackKey || groups[j].key == fallbackKey {
+			return groups[i].key != fallbackKey && groups[j].key == fallbackKey
+		}
+		left, right := foldGroupLabel(groups[i].label), foldGroupLabel(groups[j].label)
+		if left == right {
+			return groups[i].key < groups[j].key
+		}
+		if descending {
+			return left > right
+		}
+		return left < right
+	})
 	selected := []photoGroup{}
 	skip, remaining := offset, limit
 	for _, g := range groups {
@@ -186,7 +203,11 @@ func (a *AI) groupedSearch(w http.ResponseWriter, r *http.Request, clause string
 		pageArgs = append(pageArgs, sortArgs...)
 		pageArgs = append(pageArgs, normalTake, normalSkip)
 		pageArgs = append(pageArgs, sortArgs...)
-		orderBy := `m.group_label COLLATE NOCASE,m.group_key,` + order
+		groupDirection := "ASC"
+		if descending {
+			groupDirection = "DESC"
+		}
+		orderBy := `m.group_label COLLATE NOCASE ` + groupDirection + `,m.group_key,` + order
 		query := normalCTE + `, page AS MATERIALIZED(SELECT i.id,m.group_key,m.group_label FROM labels m JOIN catalog.images i ON i.id=m.image_id WHERE m.group_key IN (` + placeholders + `) ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?) SELECT metadata_json(i.metadata),m.group_key FROM page m JOIN catalog.images i ON i.id=m.id ORDER BY ` + orderBy
 		if err = readPage(query, pageArgs, labels); err != nil {
 			return err
@@ -225,12 +246,12 @@ func (a *AI) simpleGroupedSearch(w http.ResponseWriter, r *http.Request, clause 
 	if err := a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
 		return err
 	}
-	groupOrder := key + " COLLATE NOCASE," + order
+	direction := "ASC"
+	if r.URL.Query().Get("direction") == "desc" {
+		direction = "DESC"
+	}
+	groupOrder := key + " COLLATE NOCASE " + direction + "," + order
 	if kind == "year" {
-		direction := "ASC"
-		if r.URL.Query().Get("direction") == "desc" {
-			direction = "DESC"
-		}
 		// Group boundaries precede the photo sort, so their direction must
 		// agree too. Missing dates stay at the end in either direction.
 		groupOrder = "CASE WHEN " + key + "='Unknown year' THEN 1 ELSE 0 END," + key + " COLLATE NOCASE " + direction + "," + order

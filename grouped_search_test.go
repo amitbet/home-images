@@ -155,3 +155,73 @@ func TestYearGroupsFollowDateSortDirection(t *testing.T) {
 		}
 	}
 }
+
+func TestAllGroupingSortDirectionsAndPaging(t *testing.T) {
+	l, s, _ := fixture(t)
+	first := testJob(t, l, "a.jpg")
+	second := testJob(t, l, "b.jpg")
+	third := testJob(t, l, "album_100%/c.jpg")
+	l.db.Exec("DELETE FROM images WHERE id NOT IN(?,?,?)", first.ID, second.ID, third.ID)
+	l.db.Exec("UPDATE images SET directory='Alpha',taken_at='2020-01-01',created_at='2021-01-01',size_bytes=100 WHERE id=?", first.ID)
+	l.db.Exec("UPDATE images SET directory='Zulu',taken_at='2024-01-01',created_at='2025-01-01',size_bytes=300 WHERE id=?", second.ID)
+	l.db.Exec("UPDATE images SET directory='Alpha',taken_at='2022-01-01',created_at='2023-01-01',size_bytes=200 WHERE id=?", third.ID)
+	postTest(t, s, "/api/curation/"+first.ID, `{"tags":["Alpha","Zulu"],"location":"Alpha"}`)
+	postTest(t, s, "/api/curation/"+second.ID, `{"tags":["Zulu"],"location":"Zulu"}`)
+	postTest(t, s, "/api/curation/"+third.ID, `{"location":"Middle"}`)
+	for n, j := range []aiJob{first, second} {
+		pred := syntheticPrediction()
+		if n == 1 {
+			pred.Faces[0].Embedding = json.RawMessage(`"[0,1,0]"`)
+		}
+		if err := l.ai.save(context.Background(), j, pred); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l.ai.db.Exec("UPDATE people SET name=CASE WHEN id=(SELECT min(id) FROM people) THEN 'Alpha' ELSE 'Zulu' END")
+	type response struct {
+		Items []groupedPhoto
+		Total int
+	}
+	for _, kind := range []string{"path", "year", "people", "tag"} {
+		for _, sortKey := range []string{"filename", "taken_at", "created_at", "size", "person", "people_count", "location"} {
+			// Repeat asc after desc to exercise direction changes against the group cache.
+			for _, direction := range []string{"asc", "desc", "asc"} {
+				params := "sort=" + sortKey + "&direction=" + direction
+				var flat struct{ Items []Photo }
+				if getJSON(t, s, "/api/search?"+params, &flat) != 200 {
+					t.Fatal(params)
+				}
+				ranks := map[string]int{}
+				for n, p := range flat.Items {
+					ranks[p.ID] = n
+				}
+				var all response
+				url := "/api/search?group_by=" + kind + "&" + params
+				if getJSON(t, s, url, &all) != 200 || len(all.Items) != all.Total {
+					t.Fatal(url, all)
+				}
+				previousGroup, previousRank := "", -1
+				for n, p := range all.Items {
+					group := foldGroupLabel(p.GroupLabel)
+					if kind == "path" || kind == "year" {
+						group = foldGroupLabel(p.GroupKey)
+					}
+					fallback := (kind == "people" && p.GroupKey == "none") || (kind == "tag" && p.GroupKey == "")
+					if n > 0 && group != previousGroup && !fallback {
+						if (direction == "asc" && group < previousGroup) || (direction == "desc" && group > previousGroup) {
+							t.Fatal("group order", url, all.Items)
+						}
+					}
+					if group == previousGroup && ranks[p.ID] < previousRank {
+						t.Fatal("photo order", url, all.Items)
+					}
+					previousGroup, previousRank = group, ranks[p.ID]
+					var page response
+					if getJSON(t, s, fmt.Sprintf("%s&limit=1&offset=%d", url, n), &page) != 200 || page.Total != all.Total || len(page.Items) != 1 || page.Items[0].ID != p.ID || page.Items[0].GroupKey != p.GroupKey {
+						t.Fatal("pagination", url, n, page)
+					}
+				}
+			}
+		}
+	}
+}
