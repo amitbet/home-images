@@ -98,6 +98,7 @@
               <option value="size">File size</option>
             </select>
             <select id="sortDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+            <button id="toggleGridFaces" class="secondary" aria-pressed="true">Face tags on</button>
             <button id="listToggle" class="secondary" aria-pressed="false">List view</button>
           </span>
           <button id="newAlbum" class="secondary" hidden>+ New album</button
@@ -256,9 +257,8 @@
                 id="toggleFaces"
                 class="viewer-button"
                 aria-pressed="true"
-                hidden
               >
-                Faces</button
+                Face tags on</button
               ><button id="viewerFavorite" class="viewer-button">
                 ♡ Favorite</button
               ><button

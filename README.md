@@ -512,3 +512,8 @@ do not shift during review. Additional batches reveal lower-similarity candidate
 users must review matches before confirming. Up to 500 groups can be merged in one
 atomic operation. The workspace stays open after merging; the People grid refreshes
 when review is finished. Names can also be searched in the expandable section.
+
+Face-tag visibility is controlled from both the grid toolbar and image viewer,
+with a shared saved preference. Viewer overlays are recalculated after zoom/reset.
+Merge review and confirmation show the number of distinct visible source images,
+so overlapping group memberships are counted once.

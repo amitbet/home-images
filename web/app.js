@@ -802,6 +802,29 @@ function selectPerson(p) {
   load();
 }
 const mergeSelection = new Map();
+let mergeSelectedImages=null, mergeCountKey="", mergeCountTimer, mergeCountController;
+function renderMergeImageCount(){
+ const count=mergeSelectedImages===null?"counting images...":`${number(mergeSelectedImages)} images`;
+ $("mergeSelectionCount").textContent=mergeSelection.size?`${mergeSelection.size} groups selected - ${count}`:"No groups selected";
+ if($("mergeConfirm").open){
+  $("mergeKeepName").textContent=`Keep ${state.editing.name||"Person "+state.editing.id} and add these ${mergeSelection.size} groups (${count}):`;
+  $("confirmMergeGroups").disabled=mergeSelectedImages===null;
+ }
+}
+function updateMergeImageCount(){
+ const key=mergeSelection.size?`${state.editing.id}|${[...mergeSelection.keys()].sort((a,b)=>a-b).join(",")}`:"";
+ if(key===mergeCountKey){renderMergeImageCount();return;}
+ mergeCountKey=key;mergeSelectedImages=null;clearTimeout(mergeCountTimer);mergeCountController?.abort();renderMergeImageCount();
+ if(!key)return;
+ mergeCountTimer=setTimeout(async()=>{
+  const controller=new AbortController();mergeCountController=controller;
+  try{
+   const result=await api(`/api/people/${state.editing.id}/merge-preview?sources=${[...mergeSelection.keys()].join(",")}`,undefined,controller.signal);
+   if(key!==mergeCountKey)return;
+   mergeSelectedImages=result.images;renderMergeImageCount();
+  }catch(e){if(e.name!=="AbortError"&&key===mergeCountKey){$("editError").textContent="Could not count selected images. Change the selection to retry.";}}
+ },150);
+}
 let suggestedGroups = [];
 let suggestionPool = [];
 let suggestionShown = 0;
@@ -818,7 +841,7 @@ $("selectAllSuggestions").onclick = () => {
 function updateMergeSelection() {
   $("selectAllSuggestions").disabled = !suggestedGroups.length;
   $("selectAllSuggestions").textContent = suggestedGroups.length && suggestedGroups.every(p => mergeSelection.has(p.id)) ? "Clear displayed selections" : "Select all displayed";
-  $("mergeSelectionCount").textContent = mergeSelection.size ? `${mergeSelection.size} groups selected` : "No groups selected";
+  updateMergeImageCount();
   $("mergePerson").disabled = !mergeSelection.size || mergeSelection.size > 500;
   $("refreshSuggestions").disabled=!!mergeSelection.size;
   for (const input of document.querySelectorAll("input[data-merge-group]")) {
@@ -919,6 +942,7 @@ $("mergePerson").onclick = () => {
   }
   $("mergeConfirmError").textContent = "";
   modal("mergeConfirm");
+  renderMergeImageCount();
 };
 $("cancelMergeConfirm").onclick = () => closeModal("mergeConfirm");
 $("confirmMergeGroups").onclick = async () => {
@@ -1085,6 +1109,7 @@ function setViewerZoom(value) {
   $("zoomReset").textContent = `${Math.round(viewerZoom * 100)}%`;
   $("zoomOut").disabled = viewerZoom <= 1;
   $("zoomIn").disabled = viewerZoom >= 4;
+  placeFaceLayer();
 }
 $("zoomIn").onclick = () => {setViewerZoom(viewerZoom + .25); upgradeViewerResolution();};
 $("zoomOut").onclick = () => setViewerZoom(viewerZoom - .25);
@@ -1223,6 +1248,7 @@ let faceSuggestTimer;
 state.faces = [];
 state.faceMap = {};
 state.showFaces = localStorage.getItem("showFaces") !== "false";
+syncFaceToggles();
 async function loadImageFaces(photo, gen) {
   facesController?.abort();
   const controller = typeof AbortController === "function" ? new AbortController() : null;
@@ -1302,7 +1328,7 @@ function faceBox(f, onClick, ratio) {
 function thumbnailFaces(card, img) {
   card.querySelector(".thumb-faces")?.remove();
   const faces = state.faceMap[card.dataset.id];
-  if (!faces?.length) return;
+  if (!state.showFaces || !faces?.length) return;
   const layer = text("div", "", "thumb-faces");
   for (const f of faces)
     layer.append(faceBox(f, () => editFace(f, img, card.dataset.id), 4 / 3));
@@ -1312,8 +1338,7 @@ function renderFaces() {
   const layer = $("faceLayer");
   layer.replaceChildren();
   $("imagePeople").replaceChildren();
-  $("toggleFaces").hidden = !state.faces.length;
-  $("toggleFaces").setAttribute("aria-pressed", String(state.showFaces));
+  syncFaceToggles();
   const photo = currentPhoto();
   for (const f of state.faces) {
     const open = () => {
@@ -1343,7 +1368,7 @@ function placeFaceLayer() {
   const layer = $("faceLayer"),
     img = $("fullImage");
   layer.hidden =
-    !state.showFaces || !state.faces.length || !img.complete || !img.naturalWidth;
+    !state.showFaces || viewerZoom > 1 || !state.faces.length || !img.complete || !img.naturalWidth;
   if (layer.hidden) return;
   const stage = img.parentElement.getBoundingClientRect(),
     r = img.getBoundingClientRect();
@@ -1356,11 +1381,22 @@ $("fullImage").addEventListener("load", placeFaceLayer);
 window.addEventListener("resize", placeFaceLayer);
 if (typeof ResizeObserver === "function")
   new ResizeObserver(placeFaceLayer).observe($("fullImage"));
-$("toggleFaces").onclick = () => {
-  state.showFaces = !state.showFaces;
-  localStorage.setItem("showFaces", String(state.showFaces));
-  renderFaces();
-};
+function syncFaceToggles() {
+  for(const id of ["toggleFaces","toggleGridFaces"]){
+    $(id).textContent=state.showFaces?"Face tags on":"Face tags off";
+    $(id).setAttribute("aria-pressed",String(state.showFaces));
+    $(id).setAttribute("aria-label",state.showFaces?"Hide face tags":"Show face tags");
+  }
+  $("imagePeople").hidden=!state.showFaces;
+}
+function toggleFaceTags(){
+  state.showFaces=!state.showFaces;
+  localStorage.setItem("showFaces",String(state.showFaces));
+  syncFaceToggles();renderFaces();refreshThumbnailFaces();
+}
+$("toggleFaces").onclick=toggleFaceTags;
+$("toggleGridFaces").onclick=toggleFaceTags;
+
 // Apply a tag change to every loaded face list, the People grid and open views
 // in place, without reloading the page of results.
 function eachFace(fn) {

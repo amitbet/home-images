@@ -14,6 +14,7 @@ import (
 
 func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	a.curationRoutes(mux, wrap)
+	mux.HandleFunc("/api/people/{person}/merge-preview", wrap(a.mergePreview))
 	mux.HandleFunc("/api/indexing", wrap(a.indexStatus))
 	mux.HandleFunc("/api/people/{person}/merge-many", a.mutation(a.mergeMany))
 	mux.HandleFunc("/api/search", wrap(a.search))
