@@ -49,6 +49,13 @@ function Wait-Healthy {
  }
  throw 'Installer did not start a healthy, natively accelerated service'
 }
+function Config-Hash {
+ if ($IsWindows) { return (Get-FileHash -LiteralPath $config).Hash }
+ # Installed Unix configs are root/service-group readable, not runner readable.
+ $digest = & sudo shasum -a 256 $config
+ if ($LASTEXITCODE -ne 0) { throw 'Cannot hash installed configuration' }
+ return ($digest -split '\s+')[0]
+}
 try {
  Install-Bundle
  # The Windows installer stores its config beneath DataDirectory.
@@ -56,11 +63,11 @@ try {
  Wait-Healthy
  $photo = Invoke-RestMethod 'http://127.0.0.1:18379/api/next?mode=sequential'
  Invoke-RestMethod ('http://127.0.0.1:18379/api/curation/' + $photo.id) -Method Post -Headers @{'X-Home-Images'='1'} -ContentType 'application/json' -Body '{"favorite":true,"title":"Installer preservation test"}' | Out-Null
- $configHash = (Get-FileHash $config).Hash
+ $configHash = Config-Hash
  # Reinstall the same package to exercise program/codec replacement and backups.
  Install-Bundle
  Wait-Healthy
- if ((Get-FileHash $config).Hash -ne $configHash) { throw 'Upgrade changed the existing configuration' }
+ if ((Config-Hash) -ne $configHash) { throw 'Upgrade changed the existing configuration' }
  $annotation = Invoke-RestMethod ('http://127.0.0.1:18379/api/curation/' + $photo.id)
  if (-not $annotation.favorite -or $annotation.title -ne 'Installer preservation test') { throw 'Upgrade lost user annotations' }
  if ((Get-FileHash (Join-Path $destination $codec)).Hash -ne (Get-FileHash (Join-Path $bundle $codec)).Hash) { throw 'Installed codec differs from bundled codec' }
