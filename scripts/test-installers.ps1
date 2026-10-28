@@ -1,6 +1,9 @@
 # Runs on disposable CI hosts. Refuses to replace an existing HomeImages service.
 $ErrorActionPreference = 'Stop'
-$base = Join-Path ([IO.Path]::GetTempPath()) ('home-images-installer-' + [Guid]::NewGuid().ToString('N'))
+# LocalService cannot traverse the runner's private profile/temp directory.
+# Use the same machine-wide parent as a normal Windows installation.
+$fixtureParent = if ($IsWindows) { $env:ProgramData } else { [IO.Path]::GetTempPath() }
+$base = Join-Path $fixtureParent ('home-images-installer-' + [Guid]::NewGuid().ToString('N'))
 $root = Join-Path $base 'photos'
 $data = Join-Path $base 'data'
 $destination = Join-Path $base 'program/home-images'
@@ -67,6 +70,18 @@ try {
  Native @('--config',$config,'--service','start')
  Wait-Healthy
  Write-Host 'Install/upgrade/native rendering/restart/config and annotation preservation passed'
+} catch {
+ Write-Host "Installer test failed: $_"
+ if ($IsWindows) {
+  Get-CimInstance Win32_Service -Filter "Name='HomeImages'" | Format-List Name,State,StartName,PathName,ExitCode | Out-Host
+  Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; StartTime=(Get-Date).AddMinutes(-10)} -MaxEvents 10 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,Message | Out-Host
+ }
+ $serviceLog = Join-Path $data 'home-images.log'
+ if (Test-Path -LiteralPath $serviceLog) {
+  if ($IsWindows) { Get-Content -LiteralPath $serviceLog -Tail 100 | Out-Host }
+  else { & sudo tail -100 $serviceLog }
+ }
+ throw
 } finally {
  if (Test-Path -LiteralPath $binary) {
   if ($IsWindows) {
