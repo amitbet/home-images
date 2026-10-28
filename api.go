@@ -50,6 +50,7 @@ func (l *Library) Handler() http.Handler {
 	}
 	mux.HandleFunc("/health", wrap(l.health))
 	mux.Handle("/app/", http.StripPrefix("/app/", webHandler))
+	mux.HandleFunc("/favicon.svg", wrap(serveUI))
 	l.ai.routes(mux, wrap)
 	mux.HandleFunc("/api/directories", wrap(l.directories))
 	mux.HandleFunc("GET /api/filter-suggestions", wrap(l.ai.filterSuggestions))
@@ -346,7 +347,7 @@ func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
 	return err
 }
 
-const apiDocs = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Home Images API</title>
+const apiDocs = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Home Images API</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>body{font:17px system-ui;max-width:850px;margin:40px auto;padding:20px;line-height:1.6}code{background:#eee;padding:3px}li{margin:12px 0}</style>
 <h1>Home Images API</h1><p>Read-only photo API. Query paths use forward slashes relative to the configured media root.</p><ul>
 <li><a href="/health">GET /health</a> — image count and scan status</li>

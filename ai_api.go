@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -72,17 +74,41 @@ func (a *AI) mutation(fn endpoint) http.HandlerFunc {
 		}
 	}
 }
+
+type indexCounts struct {
+	total, indexed, failed, faces, people int
+}
+
+// All open tabs share a short-lived count snapshot. Worker state below stays live.
+// Covering indexes avoid reading large metadata/embedding pages just to count rows.
+func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	if time.Since(a.statusCountedAt) < 10*time.Second {
+		return a.statusCounts, nil
+	}
+	var counts indexCounts
+	if err := a.read.QueryRowContext(ctx, "SELECT count(*) FROM catalog.images").Scan(&counts.total); err != nil {
+		return counts, err
+	}
+	if err := a.read.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a INDEXED BY ai_status JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&counts.indexed, &counts.failed); err != nil {
+		return counts, err
+	}
+	// Keep faces outermost: otherwise SQLite can choose a skip-scan across all
+	// person groups for every indexed image, making status polling CPU-bound.
+	if err := a.read.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT f.person_id) FROM faces f INDEXED BY face_person CROSS JOIN ai_images a INDEXED BY ai_status ON a.image_id=f.image_id CROSS JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&counts.faces, &counts.people); err != nil {
+		return counts, err
+	}
+	a.statusCounts, a.statusCountedAt = counts, time.Now()
+	return counts, nil
+}
+
 func (a *AI) indexStatus(w http.ResponseWriter, r *http.Request) error {
-	var total, indexed, failed, faces, people int
-	if err := a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images").Scan(&total); err != nil {
+	counts, err := a.countIndex(r.Context())
+	if err != nil {
 		return err
 	}
-	if err := a.read.QueryRowContext(r.Context(), `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&indexed, &failed); err != nil {
-		return err
-	}
-	if err := a.read.QueryRowContext(r.Context(), `SELECT count(*),count(DISTINCT f.person_id) FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&faces, &people); err != nil {
-		return err
-	}
+	total, indexed, failed, faces, people := counts.total, counts.indexed, counts.failed, counts.faces, counts.people
 	a.mu.Lock()
 	active, lastErr, lastSuccess, online := a.active, a.lastError, a.lastSuccess, a.online
 	a.mu.Unlock()
@@ -124,8 +150,9 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var body struct {
-		Name      *string `json:"name"`
-		MergeInto int64   `json:"merge_into"`
+		Name          *string `json:"name"`
+		MergeInto     int64   `json:"merge_into"`
+		MatchExisting bool    `json:"match_existing"`
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		return bad(400, "Invalid JSON")
@@ -144,16 +171,27 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 	} else if err != nil {
 		return err
 	}
+	var resultName string
+	if body.Name != nil {
+		resultName = strings.TrimSpace(*body.Name)
+		if utf8.RuneCountInString(resultName) > 100 {
+			return bad(400, "Name must be at most 100 characters")
+		}
+		// Face tagging resolves names in the same transaction as the write.
+		// Suggestions are optional; stale/missing results cannot create a duplicate.
+		if body.MatchExisting && resultName != "" {
+			err = tx.QueryRow(`SELECT p.id,p.name FROM people p WHERE p.model=? AND p.merged_into IS NULL AND p.name=? COLLATE NOCASE AND p.id!=? ORDER BY (SELECT count(*) FROM faces f WHERE f.person_id=p.id) DESC,p.id LIMIT 1`, model, resultName, id).Scan(&body.MergeInto, &resultName)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+	}
 	if body.MergeInto != 0 {
 		if err = mergePersonGroups(tx, id, body.MergeInto, model); err != nil {
 			return err
 		}
 	} else if body.Name != nil {
-		name := strings.TrimSpace(*body.Name)
-		if utf8.RuneCountInString(name) > 100 {
-			return bad(400, "Name must be at most 100 characters")
-		}
-		if _, err = tx.Exec("UPDATE people SET name=? WHERE id=? AND merged_into IS NULL", name, id); err != nil {
+		if _, err = tx.Exec("UPDATE people SET name=? WHERE id=? AND merged_into IS NULL", resultName, id); err != nil {
 			return err
 		}
 	} else {
@@ -162,7 +200,7 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	return writeJSON(w, 200, map[string]any{"ok": true})
+	return writeJSON(w, 200, map[string]any{"ok": true, "merged_into": body.MergeInto, "name": resultName})
 }
 
 // Retag one face without changing the rest of its group. A name selects the
@@ -477,7 +515,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 500 {
 		return bad(400, "Query too long")
 	}
-	if mode == "semantic" && q != "" && offset > 1000 {
+	if mode == "semantic" && q != "" && r.URL.Query().Get("group_by") == "" && offset > 1000 {
 		return bad(422, "Semantic search offset exceeds 1000")
 	}
 	order, sortArgs, err := a.photoOrder(r)
@@ -490,7 +528,7 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	}
 	if r.URL.Query().Get("group_by") != "" {
 		if mode == "semantic" && q != "" {
-			return bad(400, "Grouping is unavailable for similarity-ranked searches")
+			return a.semanticGroupedSearch(w, r, q, clause, args, limit, offset)
 		}
 		return a.groupedSearch(w, r, clause, args, order, sortArgs, limit, offset)
 	}

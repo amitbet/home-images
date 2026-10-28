@@ -26,6 +26,9 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
+	statusMu          sync.Mutex
+	statusCounts      indexCounts
+	statusCountedAt   time.Time
 	pipeline          aiPipelineStats
 	lib               *Library
 	db, read          *sql.DB // Independent WAL database; never hold catalog connections during inference.
@@ -63,8 +66,10 @@ func newAI(l *Library) (*AI, error) {
 	fail := func(err error) (*AI, error) { a.Close(); return nil, err }
 	_, err = a.db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS ai_images(image_id TEXT PRIMARY KEY,signature TEXT NOT NULL,models TEXT NOT NULL,clip BLOB,error TEXT NOT NULL DEFAULT '',retry_at INTEGER NOT NULL DEFAULT 0,updated_at TEXT);
+ CREATE INDEX IF NOT EXISTS ai_status ON ai_images(models,image_id,signature,error);
  CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',model TEXT NOT NULL,embedding BLOB NOT NULL,merged_into INTEGER);
  CREATE INDEX IF NOT EXISTS people_merged_into ON people(merged_into);
+ CREATE INDEX IF NOT EXISTS people_name ON people(model,name COLLATE NOCASE) WHERE merged_into IS NULL;
  CREATE TABLE IF NOT EXISTS faces(id INTEGER PRIMARY KEY,image_id TEXT NOT NULL,person_id INTEGER NOT NULL,box TEXT NOT NULL,score REAL NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS face_image ON faces(image_id); CREATE INDEX IF NOT EXISTS face_person ON faces(person_id,image_id);
  CREATE INDEX IF NOT EXISTS face_person_cover ON faces(person_id,score DESC,id);

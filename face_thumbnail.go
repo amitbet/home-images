@@ -102,6 +102,9 @@ func (l *Library) warmPeopleThumbnails(ctx context.Context) {
 	}
 }
 func (l *Library) warmPeoplePass(ctx context.Context) error {
+	if !l.ai.waitIndexing(ctx, true) {
+		return ctx.Err()
+	}
 	rows, err := l.ai.read.QueryContext(ctx, `WITH ranked AS (
  SELECT f.image_id,f.box,f.width,f.height,
  row_number() OVER(PARTITION BY f.person_id ORDER BY f.score DESC,f.id) AS rank,
@@ -133,7 +136,9 @@ func (l *Library) warmPeoplePass(ctx context.Context) error {
 		return err
 	}
 	for _, c := range covers {
-		if ctx.Err() != nil {
+		// Cached covers still open originals to validate signatures. Pace those
+		// checks too, and honor pause/browsing before touching the next file.
+		if !waitContext(ctx, 20*time.Millisecond) || !l.ai.waitIndexing(ctx, true) {
 			return ctx.Err()
 		}
 		p, e := l.get(ctx, c.id)

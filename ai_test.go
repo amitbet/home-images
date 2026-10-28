@@ -429,7 +429,9 @@ func TestWorkerExecutableKeepsServing(t *testing.T) {
 			}
 		}
 	}()
-	deadline := time.Now().Add(8 * time.Second)
+	// The first poll can race the save and cache zero indexed images for ten
+	// seconds. Allow that status snapshot to expire before asserting completion.
+	deadline := time.Now().Add(12 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(base + "/api/indexing")
 		if err == nil {

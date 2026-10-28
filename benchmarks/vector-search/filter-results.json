@@ -1,0 +1,164 @@
+{
+  "stats_before": {
+    "main": true,
+    "catalog": true
+  },
+  "analyze_s": 31.829522000043653,
+  "new_index_s": 24.354898100020364,
+  "results": [
+    {
+      "name": "all_top60_original",
+      "candidates": 58778,
+      "median_ms": 142.0706999488175,
+      "times_ms": [
+        134.7326000686735,
+        153.36740005295724,
+        142.0706999488175
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=?)",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "directory_top60_original",
+      "candidates": 3124,
+      "median_ms": 1824.3590000784025,
+      "times_ms": [
+        1824.3590000784025,
+        1831.4183000475168,
+        1690.01720007509
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=?)",
+        "SEARCH i USING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "person_top60_original",
+      "candidates": 5091,
+      "median_ms": 1862.5548999989405,
+      "times_ms": [
+        1558.3750000223517,
+        1977.445499971509,
+        1862.5548999989405
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=? AND image_id=?)",
+        "LIST SUBQUERY 1",
+        "SEARCH ai USING COVERING INDEX ai_status (models=?)",
+        "SEARCH current USING INDEX sqlite_autoindex_images_1 (id=?)",
+        "SEARCH f USING COVERING INDEX face_person (person_id=? AND image_id=?)",
+        "CREATE BLOOM FILTER",
+        "REUSE LIST SUBQUERY 1",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "all_covering",
+      "candidates": 58778,
+      "median_ms": 271.1177000310272,
+      "times_ms": [
+        241.527899983339,
+        271.1177000310272,
+        272.39619998726994
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=?)",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "directory_existing_covering",
+      "candidates": 3124,
+      "median_ms": 100.89999996125698,
+      "times_ms": [
+        72.05120008438826,
+        100.89999996125698,
+        147.14210003148764
+      ],
+      "plan": [
+        "SEARCH i USING COVERING INDEX image_group_fields_v2 (directory=?)",
+        "SEARCH a USING COVERING INDEX ai_status (models=? AND image_id=? AND signature=? AND error=?)"
+      ]
+    },
+    {
+      "name": "person_simplified_covering",
+      "candidates": 5091,
+      "median_ms": 61.19800009764731,
+      "times_ms": [
+        75.14830003492534,
+        61.19800009764731,
+        61.15149997640401
+      ],
+      "plan": [
+        "SEARCH f USING COVERING INDEX face_person (person_id=?)",
+        "SEARCH a USING COVERING INDEX ai_status (models=? AND image_id=?)",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)",
+        "USE TEMP B-TREE FOR DISTINCT"
+      ]
+    },
+    {
+      "name": "all_top60_original_analyzed",
+      "candidates": 58778,
+      "median_ms": 176.60930007696152,
+      "times_ms": [
+        208.88220006600022,
+        150.9459000080824,
+        176.60930007696152
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=?)",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "directory_top60_original_analyzed",
+      "candidates": 3124,
+      "median_ms": 2278.1946000177413,
+      "times_ms": [
+        1610.8017000369728,
+        2472.9490999598056,
+        2278.1946000177413
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=?)",
+        "SEARCH i USING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "person_top60_original_analyzed",
+      "candidates": 5091,
+      "median_ms": 151.77350002340972,
+      "times_ms": [
+        115.68860011175275,
+        151.77350002340972,
+        168.159699998796
+      ],
+      "plan": [
+        "SEARCH a USING COVERING INDEX ai_status (models=? AND image_id=?)",
+        "LIST SUBQUERY 1",
+        "SEARCH f USING COVERING INDEX face_person (person_id=?)",
+        "SEARCH ai USING COVERING INDEX ai_status (models=? AND image_id=?)",
+        "SEARCH current USING COVERING INDEX image_person_capture (id=? AND signature=?)",
+        "CREATE BLOOM FILTER",
+        "REUSE LIST SUBQUERY 1",
+        "SEARCH i USING COVERING INDEX image_person_capture (id=? AND signature=?)"
+      ]
+    },
+    {
+      "name": "directory_new_binary_index",
+      "candidates": 3124,
+      "median_ms": 44.21129997354001,
+      "times_ms": [
+        44.21129997354001,
+        48.93589997664094,
+        37.34200005419552
+      ],
+      "plan": [
+        "SEARCH i USING COVERING INDEX bench_directory_exact (directory=?)",
+        "SEARCH a USING COVERING INDEX ai_status (models=? AND image_id=? AND signature=? AND error=?)"
+      ]
+    }
+  ]
+}

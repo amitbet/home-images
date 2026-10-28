@@ -19,6 +19,55 @@ Features:
 
 ## Build and run
 
+### Download and install a release
+
+The `v*` tag workflow publishes six complete bundles: Windows, Linux and macOS,
+each for amd64 and arm64. Every bundle includes the application, the matching
+libjpeg-turbo 3.2.0 native library, its license notices, and a local installer.
+These download commands become available once that workflow publishes a release:
+
+Linux (systemd) or macOS (launchd):
+
+```sh
+curl -fL https://github.com/amitbet/home-images/releases/latest/download/install.sh -o install.sh
+sudo bash install.sh --root /srv/photos
+# On macOS, use your own path, e.g. --root '/Volumes/Photos'
+# Pin a release: sudo bash install.sh --version v1.5.0 --root /srv/photos
+```
+
+The Unix installer needs Bash, curl, tar and Python 3 (installer only). If needed,
+install these with `apt install curl python3` or `brew install python`. Linux
+release bundles target glibc-based systems; native codec loading on musl/Alpine is
+not covered by this CI matrix. The default listener is `127.0.0.1:8372`; supply
+`--host 0.0.0.0` for LAN access. Configure the firewall separately.
+
+Windows, from an Administrator PowerShell:
+
+```powershell
+Invoke-WebRequest https://github.com/amitbet/home-images/releases/latest/download/install.ps1 -OutFile install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Root 'D:\Photos'
+# Add -Version v1.5.0 to select a particular release.
+```
+
+Both downloaders detect the OS/CPU and verify the release archive against its
+`SHA256SUMS` before invoking the bundled installer. Existing configuration,
+indexes, annotations and photos are preserved. Program/codec upgrades keep a
+backup and restore it on a failed health check. Unix installations default to
+`/usr/local/lib/home-images`, with Linux config/data in `/etc/home-images` and
+`/var/lib/home-images`, or macOS config/data under
+`/Library/Application Support/HomeImages`. Unix flags include `--prefix`,
+`--config`, `--data-dir`, `--user`, `--host` and `--port`; Windows offers
+`-Destination`, `-DataDirectory` and `-Port`. Photo access must be granted to the
+Unix service account; the Unix installer does not change photo-tree permissions.
+Unmanaged Unix services must be migrated/uninstalled before using this installer.
+Existing install/config/data locations are retained when upgrading managed bundles.
+
+For offline installation, extract the matching archive and run
+`sudo bash install-unix.sh --root /srv/photos`, or run the bundled
+`install-windows.ps1 -Root 'D:\Photos'` from Administrator PowerShell.
+
+### Build from source
+
 Requires Go 1.26.3 or newer to build. No Go installation is needed on the target host.
 
 ```sh
@@ -58,6 +107,11 @@ block does not exclude otherwise valid images. GIF/TIFF previews use the first f
 Restart to rescan immediately or apply configuration changes.
 
 The SQLite index is `data_dir/index-go.sqlite3`. Changing the root resets its entries.
+
+Exact-directory searches use a covering `(directory,id,signature)` index. Person
+filters start from the person's face index and validate model/signature matches
+through covering indexes. Bounded SQLite planner maintenance runs after schema
+setup, after the initial scan, and daily; it does not require a manual `ANALYZE`.
 It is disposable: stop the daemon before removing it to force a complete rebuild.
 Moving a photo changes its ID. Logs rotate at 10 MiB with one retained previous file.
 
@@ -367,26 +421,36 @@ licenses; FFmpeg is optional and distributed separately.
 
 ### Optional native JPEG acceleration
 
-On Windows x64, `scripts/package-turbojpeg.ps1` extracts a SHA-256-pinned official
-libjpeg-turbo 3.2.0 release into `dist/`. Install the executable, `turbojpeg.dll`,
-and `turbojpeg-licenses/` together; `install-windows.ps1` copies them as a unit.
-The accelerated CI artifact includes these files. Other platform builds remain
-standalone and use Go's decoder.
+Native JPEG acceleration supports Windows/Linux/macOS on both amd64 and arm64.
+`scripts/package-turbojpeg.ps1 -Architecture amd64` (or `arm64`) packages the
+Windows codec; `bash scripts/package-turbojpeg.sh amd64 dist/package` packages
+the Linux/macOS codec. Downloads use pinned official libjpeg-turbo 3.2.0 SHA-256
+hashes. The codec is loaded only by absolute path beside the real executable
+(symlinked executable paths are resolved), never from PATH or the working folder.
+Windows uses `turbojpeg.dll`, Linux `libturbojpeg.so`, and macOS
+`libturbojpeg.dylib`. Install the matching library and `turbojpeg-licenses/`
+alongside the executable. The CI release bundles and installers do this together.
+Unix bindings use purego; application builds still use `CGO_ENABLED=0` without
+requiring a C compiler. They are not claimed to be fully static Linux binaries.
 
-With `"jpeg_decoder": "auto"` (the default), an available DLL enables SIMD JPEG
+With `"jpeg_decoder": "auto"` (the default), an available library enables SIMD JPEG
 decode/encode and reduced-resolution decoding inside isolated preview workers.
 EXIF orientation, final Lanczos resize, face crops and existing caches are preserved.
 Native input/dimension/working-set bounds are checked; unsupported colorspaces,
-codec errors or missing DLLs fall back to Go. A failed native JPEG worker is retried
+codec errors or missing/unloadable libraries fall back to Go on supported systems. A failed native JPEG worker is retried
 once with Go within the original request deadline. Set `"jpeg_decoder": "go"` and
 restart to disable acceleration. `/health` reports `jpeg_decoder` as `turbojpeg` or
 `go`; individual files can still fall back. The HTTP process never decodes through
 the native library.
 
-For native tests, set `HOMEIMAGES_TEST_TURBO_DLL` to the absolute DLL path and
+For native tests, set `HOMEIMAGES_TEST_TURBO_LIBRARY` to the absolute library path and
 `HOMEIMAGES_TEST_PREVIEW_EXE` to a freshly built application executable, then run
 `go test ./...`. Tests cover all eight orientations, progressive JPEG, dimensions,
-pixel limits, cancellation, isolated execution and missing/unloadable DLL fallback.
+pixel limits, cancellation, isolated execution, symlinked executable discovery
+and missing/unloadable library fallback. `HOMEIMAGES_TEST_TURBO_DLL` remains a
+backward-compatible test alias. CI runs native tests on all six OS/CPU combinations,
+plus Unix race tests, daemon lifecycle tests, download/checksum rejection tests,
+and real install/upgrade/restart tests that verify config/annotation preservation.
 
 ### Indexing throughput
 
@@ -495,8 +559,12 @@ Fullscreen targets the document rather than the modal dialog.
 The grid/list supports `group_by=path|year|people|tag` on `/api/search`.
 Grouping covers the full filtered selection before pagination. People and tag
 memberships can repeat a photo; responses include `unique_total` and membership
-`total`. Unassigned photos appear in explicit fallback groups. Similarity-ranked
-content searches keep their ranking and disable grouping.
+`total`. Unassigned photos appear in explicit fallback groups. Content searches
+also support all four groupings: the top 1,200 matches are selected first, then
+grouped with similarity ranking preserved within each group. Responses report
+`ranked_limit`, `unique_total`, membership `total`, and `indexed_candidates`.
+Group direction changes group order while photo order remains most similar first.
+Grouped pagination covers every membership, including offsets above 1,000.
 `GET /api/filter-suggestions?kind=tag|place|folder&q=...` supplies up to 30
 literal substring suggestions from visible indexed photos. Place suggestions
 and filtering include local GeoNames labels, with manual location overrides.

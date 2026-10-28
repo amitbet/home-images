@@ -1,4 +1,4 @@
-//go:build windows && amd64
+//go:build (windows || linux || darwin) && (amd64 || arm64)
 
 package main
 
@@ -16,43 +16,22 @@ import (
 	"unsafe"
 
 	"github.com/disintegration/imaging"
-	"golang.org/x/sys/windows"
 )
-
-// Optional native code is used only inside the existing disposable preview worker.
-// Load an absolute, application-owned DLL, never a name searched through PATH/CWD.
-type turboJPEG struct {
-	dll  *windows.DLL
-	proc map[string]*windows.Proc
-}
 
 var turboOnce sync.Once
 var turboDefault *turboJPEG
+var turboSymbols = []string{"tjInitDecompress", "tjInitCompress", "tjDestroy", "tjDecompressHeader3", "tjGetScalingFactors", "tjDecompress2", "tjCompress2", "tjFree", "tjGetErrorCode", "tjGetErrorStr2"}
 
-func loadTurboJPEG(path string) (*turboJPEG, error) {
-	if !filepath.IsAbs(path) {
-		return nil, fmt.Errorf("TurboJPEG path must be absolute")
-	}
-	handle, err := windows.LoadLibraryEx(path, 0, windows.LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
-	if err != nil {
-		return nil, err
-	}
-	lib := &turboJPEG{dll: &windows.DLL{Name: path, Handle: handle}, proc: map[string]*windows.Proc{}}
-	for _, name := range []string{"tjInitDecompress", "tjInitCompress", "tjDestroy", "tjDecompressHeader3", "tjGetScalingFactors", "tjDecompress2", "tjCompress2", "tjFree", "tjGetErrorCode", "tjGetErrorStr2"} {
-		p, e := lib.dll.FindProc(name)
-		if e != nil {
-			lib.dll.Release()
-			return nil, e
-		}
-		lib.proc[name] = p
-	}
-	return lib, nil
-}
+// Only load an absolute, application-owned library beside the executable.
+// The installers bundle it; PATH/CWD and system codec versions are not searched.
 func defaultTurboJPEG() *turboJPEG {
 	turboOnce.Do(func() {
 		exe, err := os.Executable()
 		if err == nil {
-			turboDefault, _ = loadTurboJPEG(filepath.Join(filepath.Dir(exe), "turbojpeg.dll"))
+			exe, err = filepath.EvalSymlinks(exe)
+		}
+		if err == nil {
+			turboDefault, _ = loadTurboJPEG(filepath.Join(filepath.Dir(exe), turboLibraryName()))
 		}
 	})
 	return turboDefault
@@ -71,13 +50,6 @@ func nativeJPEGPreview(ctx context.Context, f *os.File, p Photo, width, height, 
 	return lib.preview(ctx, f, p, width, height, quality, maxPixels, crop...)
 }
 
-// Keep pointer arguments alive and off movable goroutine stacks across the
-// variadic wrapper, just as windows.Proc.Call does at direct call sites.
-//go:uintptrescapes
-func (lib *turboJPEG) call(name string, args ...uintptr) uintptr {
-	value, _, _ := lib.proc[name].Call(args...)
-	return value
-}
 func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, height, quality int, maxPixels int64, crop ...*faceCrop) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -159,7 +131,7 @@ func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, h
 			return nil, fmt.Errorf("native JPEG decode failed")
 		}
 		pointer := lib.call("tjGetErrorStr2", handle)
-		message := windows.BytePtrToString((*byte)(*(*unsafe.Pointer)(unsafe.Pointer(&pointer))))
+		message := turboString(pointer)
 		// Only the benign camera warning verified against Go in the benchmark is
 		// accepted. Truncation and other warnings go through the existing decoder.
 		if message != "Invalid SOS parameters for sequential JPEG" {
@@ -187,7 +159,8 @@ func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, h
 	}
 	defer lib.call("tjDestroy", compressor)
 	var output unsafe.Pointer
-	var size uint32
+	// C unsigned long is 32-bit on Windows and 64-bit on our Unix targets.
+	var size turboSize
 	code = lib.call("tjCompress2", compressor, uintptr(unsafe.Pointer(&rgba.Pix[0])), uintptr(rgba.Bounds().Dx()), uintptr(rgba.Stride), uintptr(rgba.Bounds().Dy()), 7, uintptr(unsafe.Pointer(&output)), uintptr(unsafe.Pointer(&size)), 2, uintptr(quality), 0)
 	runtime.KeepAlive(rgba)
 	if output != nil {
@@ -200,4 +173,20 @@ func (lib *turboJPEG) preview(ctx context.Context, f *os.File, p Photo, width, h
 		return nil, err
 	}
 	return bytes.Clone(unsafe.Slice((*byte)(output), int(size))), nil
+}
+
+func turboString(address uintptr) string {
+	if address == 0 {
+		return ""
+	}
+	pointer := *(*unsafe.Pointer)(unsafe.Pointer(&address))
+	message := make([]byte, 0, 128)
+	for i := 0; i < 4096; i++ {
+		b := *(*byte)(unsafe.Add(pointer, i))
+		if b == 0 {
+			break
+		}
+		message = append(message, b)
+	}
+	return string(message)
 }

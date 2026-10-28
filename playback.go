@@ -77,11 +77,21 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 		if e != nil || id < 1 {
 			return "", nil, bad(400, "Invalid person")
 		}
-		clause += ` AND id IN(SELECT f.image_id FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images current ON current.id=ai.image_id AND current.signature=ai.signature WHERE f.person_id=? AND ai.models=? AND ai.error='')`
+		clause += ` AND ` + currentPersonImages
 		args = append(args, id, a.models)
 	}
 	return clause, args, nil
 }
+
+// Start with this person's faces and validate their images through compact
+// covering indexes. The shared predicate also serves metadata-only searches,
+// so it must reject stale signatures, failed indexing and other model versions.
+// CROSS JOIN keeps SQLite from starting with every indexed photo instead.
+const currentPersonImages = `id IN(SELECT f.image_id FROM faces f INDEXED BY face_person
+ CROSS JOIN ai_images ai INDEXED BY ai_status ON ai.image_id=f.image_id
+ CROSS JOIN catalog.images current INDEXED BY image_person_capture ON current.id=ai.image_id AND current.signature=ai.signature
+ WHERE f.person_id=? AND ai.models=? AND ai.error='')`
+
 func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, limit int) (playSelection, error) {
 	result := playSelection{Created: time.Now(), Mode: "semantic"}
 	if a.lib.config.ML.URL == "" {
@@ -141,6 +151,12 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 	filters := r.URL.Query()
 	for _, key := range []string{"after", "order", "refresh", "collection", "offset", "limit"} {
 		filters.Del(key)
+	}
+	if mode == "semantic" {
+		// Presentation changes share the same similarity-ranked candidate pool.
+		for _, key := range []string{"group_by", "sort", "direction", "layout"} {
+			filters.Del(key)
+		}
 	}
 	filters.Set("pool_limit", strconv.Itoa(limit))
 	filters.Set("mode", mode)

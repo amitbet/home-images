@@ -3,76 +3,111 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  test:
+  native:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - {runner: ubuntu-22.04, os: linux, arch: amd64}
+          - {runner: ubuntu-22.04-arm, os: linux, arch: arm64}
+          - {runner: macos-15-intel, os: darwin, arch: amd64}
+          - {runner: macos-15, os: darwin, arch: arm64}
+          - {runner: windows-2025, os: windows, arch: amd64}
+          - {runner: windows-11-arm, os: windows, arch: arm64}
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Package optional native JPEG codec
+      - name: Package pinned native JPEG codec (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: ./scripts/package-turbojpeg.ps1 -Architecture $env:TARGET_ARCH -OutputDirectory dist/package
+      - name: Package pinned native JPEG codec (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash scripts/package-turbojpeg.sh "$TARGET_ARCH" dist/package
+      - name: Build standalone application and configure native tests
+        shell: pwsh
         run: |
-          ./scripts/package-turbojpeg.ps1
-          go build -o dist/native-jpeg-test.exe .
-          if ($LASTEXITCODE -ne 0) { throw 'Native worker test build failed' }
-          "HOMEIMAGES_TEST_PREVIEW_EXE=$((Resolve-Path dist/native-jpeg-test.exe).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "HOMEIMAGES_TEST_TURBO_DLL=$((Resolve-Path dist/turbojpeg.dll).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $codec = if ($IsWindows) { 'turbojpeg.dll' } elseif ($IsMacOS) { 'libturbojpeg.dylib' } else { 'libturbojpeg.so' }
+          go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_SHA" -o "dist/package/home-images$suffix" .
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          "HOMEIMAGES_TEST_PREVIEW_EXE=$((Resolve-Path "dist/package/home-images$suffix").Path)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "HOMEIMAGES_TEST_TURBO_LIBRARY=$((Resolve-Path "dist/package/$codec").Path)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - run: go test -count=1 ./...
       - run: go vet ./...
-      - if: runner.os != 'Windows'
-        run: go test -race ./...
+      - name: Race tests
+        if: runner.os != 'Windows'
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 ./...
       - name: Native daemon lifecycle smoke test
         shell: pwsh
         run: ./scripts/test-daemon.ps1
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [windows, linux, darwin]
-        goarch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build standalone binary
-        shell: bash
+      - name: Create installable release bundle
+        shell: pwsh
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-        run: |
-          suffix=""
-          if [ "$GOOS" = windows ]; then suffix=".exe"; fi
-          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA::12}" -o "dist/home-images-$GOOS-$GOARCH$suffix" .
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: ./scripts/package-release.ps1 -OS $env:TARGET_OS -Architecture $env:TARGET_ARCH
+      - name: Test release download and checksum rejection
+        shell: pwsh
+        run: ./scripts/test-download-installers.ps1
+      - name: Test install, upgrade, restart and data preservation
+        shell: pwsh
+        run: ./scripts/test-installers.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: home-images-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
-
-  accelerated-windows:
-    runs-on: windows-latest
+          name: home-images-package-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+  lint-installers:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - shell: pwsh
+      - run: shellcheck install.sh install-unix.sh scripts/package-turbojpeg.sh
+      - name: Parse PowerShell scripts
+        shell: pwsh
         run: |
-          ./scripts/package-turbojpeg.ps1
-          go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_SHA" -o dist/home-images-windows-amd64.exe .
-          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
-      - uses: actions/upload-artifact@v4
+          Get-ChildItem install*.ps1,scripts/*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$null,[ref]$parseErrors) | Out-Null
+            if ($parseErrors) { throw ($parseErrors | Out-String) }
+          }
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [native, lint-installers]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: home-images-windows-amd64-accelerated
-          path: |
-            dist/home-images-windows-amd64.exe
-            dist/turbojpeg.dll
-            dist/turbojpeg-licenses/
+          pattern: home-images-package-*
+          path: release
+          merge-multiple: true
+      - name: Publish bundles, checksums and download installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          cp install.sh install.ps1 release/
+          cd release
+          sha256sum home-images-*.tar.gz home-images-*.zip > SHA256SUMS
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" ./* --clobber
+          else
+            gh release create "$RELEASE_TAG" ./* --verify-tag --generate-notes
+          fi

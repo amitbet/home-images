@@ -12,8 +12,10 @@ Copy-Item testdata/orientation6.jpg (Join-Path $root 'photo.jpg')
 $script:binary = Join-Path $base ('home-images' + $(if ($IsWindows) { '.exe' } else { '' }))
 go build -o $script:binary .
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
-if ($IsWindows -and $env:HOMEIMAGES_TEST_TURBO_DLL) {
-    Copy-Item -LiteralPath $env:HOMEIMAGES_TEST_TURBO_DLL -Destination (Join-Path $base 'turbojpeg.dll')
+$codec = $env:HOMEIMAGES_TEST_TURBO_LIBRARY
+if (-not $codec) { $codec = $env:HOMEIMAGES_TEST_TURBO_DLL }
+if ($codec) {
+    Copy-Item -LiteralPath $codec -Destination (Join-Path $base (Split-Path -Leaf $codec))
 }
 
 $config = Join-Path $base 'config.json'
@@ -32,7 +34,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'Daemon did not index the fixture' }
-    if ($IsWindows -and $env:HOMEIMAGES_TEST_TURBO_DLL -and $health.jpeg_decoder -ne 'turbojpeg') { throw 'Native JPEG decoder was not loaded' }
+    if ($codec -and $health.jpeg_decoder -ne 'turbojpeg') { throw 'Native JPEG decoder was not loaded' }
     $photo = Invoke-RestMethod 'http://127.0.0.1:18379/api/next?mode=sequential'
     $image = Invoke-WebRequest ('http://127.0.0.1:18379' + $photo.image_url)
     if ($image.StatusCode -ne 200 -or $image.Headers['Content-Type'] -notlike '*image/jpeg*') { throw 'Daemon image delivery failed' }

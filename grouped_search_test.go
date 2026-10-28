@@ -59,7 +59,7 @@ func TestGroupedSearchMembershipsAndPagination(t *testing.T) {
 	if hidden.Total != 2 || hidden.Unique != 1 {
 		t.Fatal("hidden memberships", hidden)
 	}
-	for _, query := range []string{"group_by=invalid", "group_by=year&mode=semantic&q=cat"} {
+	for _, query := range []string{"group_by=invalid", "group_by=invalid&mode=semantic&q=cat"} {
 		var result map[string]any
 		if getJSON(t, s, "/api/search?"+query, &result) != 400 {
 			t.Fatal(query)

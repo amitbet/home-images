@@ -1,0 +1,30 @@
+{
+  "queries": 80,
+  "exact_outputs_identical": true,
+  "results": [
+    {
+      "case": "all_top60",
+      "before_median_ms": 1546.9650000000001,
+      "after_median_ms": 1496.0065,
+      "speedup": 1.0340630204481065
+    },
+    {
+      "case": "all_top500",
+      "before_median_ms": 1569.6775,
+      "after_median_ms": 1497.8584999999998,
+      "speedup": 1.0479477867902744
+    },
+    {
+      "case": "directory_top60",
+      "before_median_ms": 1912.6055000000001,
+      "after_median_ms": 123.23349999999999,
+      "speedup": 15.520175114721242
+    },
+    {
+      "case": "person_top60",
+      "before_median_ms": 1946.8114999999998,
+      "after_median_ms": 261.35,
+      "speedup": 7.449058733499138
+    }
+  ]
+}

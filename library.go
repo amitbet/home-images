@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	// Cover grouping/autocomplete fields without scanning compressed metadata pages.
-	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_directory_exact ON images(directory,id,signature); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
 		l.Close()
 		return nil, err
 	}
@@ -135,7 +135,22 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	// Gather bounded planner statistics after schema changes, before the reader
+	// pools prepare their first queries. Maintenance is best effort.
+	l.optimizeDatabases(context.Background())
 	return l, nil
+}
+
+func (l *Library) optimizeDatabases(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	for _, db := range []*sql.DB{l.db, l.ai.db} {
+		// Readers and writers use different connections. Inspect all tables,
+		// including those this writer connection has not queried itself.
+		if _, err := db.ExecContext(ctx, "PRAGMA main.optimize=0x10002"); err != nil && ctx.Err() == nil {
+			log.Printf("SQLite planner maintenance: %v", err)
+		}
+	}
 }
 func (l *Library) Close() {
 	if l.ai != nil {
@@ -216,14 +231,19 @@ func (l *Library) Run(ctx context.Context) {
 	defer func() { <-thumbnailDone }()
 	defer func() { <-aiDone }()
 	l.Scan(ctx)
+	l.optimizeDatabases(ctx)
 	ticker := time.NewTicker(time.Duration(l.config.ScanInterval) * time.Second)
 	defer ticker.Stop()
+	optimizeTicker := time.NewTicker(24 * time.Hour)
+	defer optimizeTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			l.Scan(ctx)
+		case <-optimizeTicker.C:
+			l.optimizeDatabases(ctx)
 		}
 	}
 }

@@ -26,6 +26,7 @@ const state = {
   busy: false,
   savedName: "",
   semantic: false,
+  grouped: false,
   dirty: false,
 };
 const number = (n) => Number(n || 0).toLocaleString();
@@ -182,7 +183,7 @@ function params() {
   });
   for (const [key, id] of Object.entries(fields))
     if ($(id).value.trim()) p.set(key, $(id).value.trim());
-  if ($("photoGroup").value && !($("mode").value === "semantic" && $("query").value.trim())) p.set("group_by", $("photoGroup").value);
+  if ($("photoGroup").value) p.set("group_by", $("photoGroup").value);
   p.set("sort", $("photoSort").value);
   p.set("direction", $("sortDirection").value);
   p.set("layout", state.layout);
@@ -254,9 +255,14 @@ function viewChrome() {
   $("mode").hidden = state.view === "people";
   $("photoDisplayControls").hidden = !photoViews();
   const ranked = $("mode").value === "semantic" && !!$("query").value.trim();
-  for (const id of ["photoGroup", "photoSort", "sortDirection"]) {
+  for (const id of ["photoSort", "sortDirection"]) {
     $(id).disabled = ranked;
     $(id).title = ranked ? "Content searches are ranked by visual similarity" : "";
+  }
+  $("photoGroup").disabled = false;
+  if (ranked && $("photoGroup").value) {
+    $("sortDirection").disabled = false;
+    $("sortDirection").title = "Group order; photos stay ranked by visual similarity";
   }
   $("gallery").classList.toggle("list-view", state.layout === "list");
   $("listToggle").textContent = state.layout === "list" ? "Grid view" : "List view";
@@ -294,13 +300,13 @@ function setView(view) {
 }
 function pagination() {
   const limit = state.view === "people" ? 48 : 60;
-  const cap = state.semantic ? Math.min(state.total, 1200) : state.total;
+  const cap = state.semantic && !state.grouped ? Math.min(state.total, 1200) : state.total;
   $("previous").hidden = state.offset === 0 || state.view === "albums";
   $("next").hidden =
     state.view === "albums" ||
     state.offset + state.items.length >= cap ||
     !state.items.length ||
-    (state.semantic && state.offset + limit > 1000);
+    (state.semantic && !state.grouped && state.offset + limit > 1000);
   $("pageLabel").textContent =
     state.view !== "albums" && state.total
       ? `${number(state.offset + 1)}–${number(state.offset + state.items.length)} of ${number(state.total)}`
@@ -389,6 +395,7 @@ async function load() {
       state.items = result.items;
       state.total = result.total;
       state.semantic = false;
+      state.grouped = false;
       renderPeople();
       $("resultsCount").textContent = number(result.total) + " groups";
       if (!result.items.length)
@@ -411,17 +418,18 @@ async function load() {
       state.items = result.items;
       state.total = result.total;
       state.semantic = result.semantic;
+      state.grouped = !!result.group_by;
       state.annotations = annotations;
       renderPhotos();
       void loadThumbnailFaces(gen);
       const q = $("query").value.trim();
       if (q) $("resultsTitle").textContent = "Results for “" + q + "”";
-      $("resultsCount").textContent = result.semantic
+      $("resultsCount").textContent = result.group_by ? `${number(result.unique_total)} photos; ${number(result.total)} group entries` : result.semantic
         ? number(result.indexed_candidates) + " indexed candidates"
-        : result.group_by ? `${number(result.unique_total)} photos; ${number(result.total)} group entries` : number(result.total) + " photos";
+        : number(result.total) + " photos";
       if (result.semantic)
         notice(
-          "Ranked by visual similarity across indexed photos.",
+          result.group_by ? `Top ${number(result.unique_total)} matching photos grouped; ranked by visual similarity within each group.` : "Ranked by visual similarity across indexed photos.",
         );
       if (!result.items.length)
         empty(
@@ -1483,15 +1491,18 @@ function drawFaceCrop(f, img) {
   ctx.drawImage(img, cx - side / 2, cy - side / 2, side, side, 0, 0, canvas.width, canvas.height);
 }
 async function faceSuggestions() {
+  const face = state.editingFace, name = $("faceName").value.trim();
   try {
     const result = await api(
-      "/api/people?limit=50&q=" + encodeURIComponent($("faceName").value.trim()),
+      "/api/people?limit=50&q=" + encodeURIComponent(name),
     );
+    if (state.editingFace !== face || $("faceName").value.trim() !== name) return;
     state.faceMatches = result.items.filter((p) => p.name);
     $("faceSuggestions").replaceChildren(
       ...state.faceMatches.map((p) => new Option(p.name)),
     );
   } catch (e) {
+    if (state.editingFace !== face || $("faceName").value.trim() !== name) return;
     state.faceMatches = [];
   }
   faceHint();
@@ -1512,7 +1523,9 @@ function faceHint() {
       : `This face moves to ${owner.name}.`
     : scope === "face" && $("faceName").value.trim()
       ? "This face starts a new person."
-      : "";
+      : scope === "group" && $("faceName").value.trim()
+        ? "An existing name combines this group with that person."
+        : "";
 }
 function editFace(f, img, imageId) {
   state.editingFace = f;
@@ -1539,15 +1552,18 @@ for (const r of document.querySelectorAll("input[name=faceScope]"))
 $("cancelFace").onclick = () => closeModal("faceEditor");
 $("faceForm").onsubmit = async (e) => {
   e.preventDefault();
+  if ($("faceForm").getAttribute("aria-busy") === "true") return;
   const f = state.editingFace,
     name = $("faceName").value.trim(),
     scope = document.querySelector("input[name=faceScope]:checked").value;
   const button = e.submitter || $("faceForm").querySelector("[type=submit]");
+  const label = button.textContent;
   button.disabled = true;
+  button.textContent = "Saving…";
+  $("faceForm").setAttribute("aria-busy", "true");
+  $("faceError").textContent = "";
+  clearTimeout(faceSuggestTimer);
   try {
-    // Re-check against the server so a stale suggestion list cannot create a duplicate name.
-    await faceSuggestions();
-    const owner = faceNameOwner();
     let message;
     if (scope === "face") {
       if (!name) throw Error("Enter a name for this face.");
@@ -1560,17 +1576,16 @@ $("faceForm").onsubmit = async (e) => {
       });
       facesChanged();
       message = "Face tagged as " + moved.name;
-    } else if (owner) {
-      if (!confirm(`Merge ${faceName(f)} into ${owner.name}? Their photos are combined.`))
-        return;
-      const source = state.people.find((p) => p.id === f.person_id) || { id: f.person_id };
-      await api("/api/people/" + f.person_id, { merge_into: owner.id });
-      mergePerson(source, owner);
-      message = `Merged into ${owner.name}`;
     } else {
-      await api("/api/people/" + f.person_id, { name });
-      renamePerson(f.person_id, name);
-      message = name ? "Renamed to " + name : "Name cleared";
+      const result = await api("/api/people/" + f.person_id, { name, match_existing: true });
+      if (result.merged_into) {
+        const source = state.people.find((p) => p.id === f.person_id) || { id: f.person_id };
+        mergePerson(source, { id: result.merged_into, name: result.name });
+        message = `Tagged as ${result.name}`;
+      } else {
+        renamePerson(f.person_id, result.name);
+        message = result.name ? "Tagged as " + result.name : "Name cleared";
+      }
     }
     closeModal("faceEditor");
     toast(message);
@@ -1579,6 +1594,8 @@ $("faceForm").onsubmit = async (e) => {
     $("faceError").textContent = e.message;
   } finally {
     button.disabled = false;
+    button.textContent = label;
+    $("faceForm").removeAttribute("aria-busy");
   }
 };
 function stopPlay() {
@@ -1652,7 +1669,7 @@ async function advance(direction, auto = false) {
       return;
     }
     const limit = 60;
-    const cap = state.semantic ? Math.min(state.total, 1060) : state.total;
+    const cap = state.semantic && !state.grouped ? Math.min(state.total, 1060) : state.total;
     state.offset =
       direction > 0
         ? state.offset + limit >= cap

@@ -8,8 +8,22 @@ param(
     [int]$Port = 8372
 )
 $ErrorActionPreference = 'Stop'
-if (-not $BinaryPath) { $BinaryPath = Join-Path $PSScriptRoot 'dist\home-images-windows-amd64.exe' }
+if (-not $BinaryPath) {
+    $BinaryPath = Join-Path $PSScriptRoot 'home-images.exe'
+    if (-not (Test-Path -LiteralPath $BinaryPath)) { $BinaryPath = Join-Path $PSScriptRoot 'dist\home-images-windows-amd64.exe' }
+}
 function Check-Exit([string]$Action) { if ($LASTEXITCODE -ne 0) { throw "$Action failed: exit $LASTEXITCODE" } }
+function Ensure-ServiceAccess([string]$Path, [Security.AccessControl.FileSystemRights]$Rights, [string]$Grant) {
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+    foreach ($rule in (Get-Acl -LiteralPath $Path).Access) {
+        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        if ($sid -eq 'S-1-5-19' -and $rule.AccessControlType -eq 'Allow' -and
+            ($rule.FileSystemRights -band $Rights) -eq $Rights -and
+            ($rule.InheritanceFlags -band $inherit) -eq $inherit -and $rule.PropagationFlags -eq 'None') { return }
+    }
+    & icacls $Path /grant $Grant | Out-Null
+    Check-Exit "Grant service access to $Path"
+}
 function Wait-ProgramFiles([string]$Directory) {
     # Service status can change before its last preview child releases the files.
     for ($attempt=0; $attempt -lt 50; $attempt++) {
@@ -47,6 +61,10 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 if (-not (Test-Path -LiteralPath $config.root -PathType Container)) { throw "Photo root does not exist: $($config.root)" }
 if ([IO.Path]::GetFullPath($config.data_dir).TrimEnd('\') -ne $DataDirectory) { throw 'config.data_dir must match DataDirectory' }
+# Grant inherited access only when it is missing, before stopping the service.
+# Reapplying an unchanged photo-tree ACL can otherwise make upgrades very slow.
+Ensure-ServiceAccess $DataDirectory Modify '*S-1-5-19:(OI)(CI)(M)'
+Ensure-ServiceAccess $config.root ReadAndExecute '*S-1-5-19:(OI)(CI)(RX)'
 $old = Get-CimInstance Win32_Service -Filter "Name='HomeImages'"
 $legacyIndex = Join-Path $DataDirectory 'index.sqlite3'
 if ((Test-Path -LiteralPath $legacyIndex) -and (-not $old -or $old.PathName -notmatch 'home-images\.exe')) {
@@ -68,6 +86,13 @@ try {
     if (Test-Path -LiteralPath $Destination) { Move-Item -LiteralPath $Destination -Destination $oldProgram; $moved = $true }
     New-Item -ItemType Directory -Force $Destination | Out-Null
     Copy-Item -LiteralPath $BinaryPath -Destination $binary
+    $sourceDirectory = Split-Path -Parent $BinaryPath
+    foreach ($notice in @('LICENSE','THIRD-PARTY-NOTICES.md')) {
+        $noticePath = Join-Path $sourceDirectory $notice
+        if (Test-Path -LiteralPath $noticePath) { Copy-Item -LiteralPath $noticePath -Destination $Destination }
+    }
+    $dependencyLicenses = Join-Path $sourceDirectory 'third-party-licenses'
+    if (Test-Path -LiteralPath $dependencyLicenses) { Copy-Item -LiteralPath $dependencyLicenses -Destination $Destination -Recurse }
     $codec = Join-Path (Split-Path -Parent $BinaryPath) 'turbojpeg.dll'
     if (Test-Path -LiteralPath $codec) {
         Copy-Item -LiteralPath $codec -Destination $Destination
@@ -76,9 +101,7 @@ try {
         Copy-Item -LiteralPath $codecLicenses -Destination $Destination -Recurse
     }
 
-    & icacls $Destination /grant '*S-1-5-19:(OI)(CI)(RX)' | Out-Null; Check-Exit 'Grant program access'
-    & icacls $DataDirectory /grant '*S-1-5-19:(OI)(CI)(M)' | Out-Null; Check-Exit 'Grant data access'
-    & icacls $config.root /grant '*S-1-5-19:(OI)(CI)(RX)' | Out-Null; Check-Exit 'Grant photo access'
+    Ensure-ServiceAccess $Destination ReadAndExecute '*S-1-5-19:(OI)(CI)(RX)'
     if ($old) {
         $command = '"' + $binary + '" --config "' + $configPath + '"'
         $changed = Invoke-CimMethod -InputObject $old -MethodName Change -Arguments @{PathName=$command; StartName='NT AUTHORITY\LocalService'; StartMode='Automatic'}

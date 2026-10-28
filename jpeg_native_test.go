@@ -1,4 +1,4 @@
-//go:build windows && amd64
+//go:build (windows || linux || darwin) && (amd64 || arm64)
 
 package main
 
@@ -11,21 +11,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func testTurboLibrary(t *testing.T) *turboJPEG {
 	t.Helper()
-	path := os.Getenv("HOMEIMAGES_TEST_TURBO_DLL")
+	path := testTurboPath()
 	if path == "" {
-		t.Skip("set HOMEIMAGES_TEST_TURBO_DLL to test native codec")
+		t.Skip("set HOMEIMAGES_TEST_TURBO_LIBRARY to test native codec")
 	}
 	lib, err := loadTurboJPEG(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { lib.dll.Release() })
+	t.Cleanup(func() { lib.close() })
 	return lib
 }
 func TestNativeJPEGOrientationLimitsAndProgressive(t *testing.T) {
@@ -105,14 +106,18 @@ func TestNativeJPEGWorkerFallback(t *testing.T) {
 		t.Skip("set HOMEIMAGES_TEST_PREVIEW_EXE for isolated worker test")
 	}
 	base := t.TempDir()
-	app := filepath.Join(base, "home-images.exe")
-	dll := filepath.Join(base, "turbojpeg.dll")
-	for dst, src := range map[string]string{app: source, dll: os.Getenv("HOMEIMAGES_TEST_TURBO_DLL")} {
+	name := "home-images"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	app := filepath.Join(base, name)
+	dll := filepath.Join(base, turboLibraryName())
+	for dst, src := range map[string]string{app: source, dll: testTurboPath()} {
 		data, err := os.ReadFile(src)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = os.WriteFile(dst, data, 0600); err != nil {
+		if err = os.WriteFile(dst, data, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -170,6 +175,18 @@ func TestNativeJPEGWorkerFallback(t *testing.T) {
 	if !bytes.Equal(expected, accelerated) {
 		t.Fatal("worker did not use native codec")
 	}
+	if runtime.GOOS != "windows" {
+		alias := filepath.Join(t.TempDir(), "home-images")
+		if err := os.Symlink(app, alias); err != nil {
+			t.Fatal(err)
+		}
+		original := app
+		app = alias
+		if !bytes.Equal(expected, run("auto", "orientation6.jpg")) {
+			t.Fatal("symlinked executable did not locate its bundled codec")
+		}
+		app = original
+	}
 	if !bytes.Equal(run("go", "preview-cmyk.jpg"), run("auto", "preview-cmyk.jpg")) {
 		t.Fatal("unsupported CMYK did not fall back to Go")
 	}
@@ -185,4 +202,11 @@ func TestNativeJPEGWorkerFallback(t *testing.T) {
 	if !bytes.Equal(pure, run("auto", "orientation6.jpg")) {
 		t.Fatal("unloadable DLL did not fall back to Go")
 	}
+}
+
+func testTurboPath() string {
+	if path := os.Getenv("HOMEIMAGES_TEST_TURBO_LIBRARY"); path != "" {
+		return path
+	}
+	return os.Getenv("HOMEIMAGES_TEST_TURBO_DLL")
 }

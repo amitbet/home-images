@@ -66,6 +66,11 @@ it so undo cannot overwrite later corrections.
 Gallery thumbnails show the same face outlines when you hover a card (always shown for
 named faces on touch screens); click one to tag it without opening the viewer. Renames,
 merges and face retags update the open gallery, viewer and People cards in place.
+Saving a face tag uses one request and shows progress immediately. When applying
+to the whole group, an existing name combines the groups as explained inline;
+there is no extra confirmation popup. Name matching happens during the save, so
+tagging does not wait for autocomplete. **Only this face** keeps other faces in
+their current group. A failed save keeps the editor open for retry.
 
 In the photo viewer, detected faces are outlined on the image with their names (unnamed
 faces are dashed). **Faces** toggles the outlines; they are hidden during playback. Click a
