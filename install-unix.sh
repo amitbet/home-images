@@ -140,7 +140,7 @@ done
 if ! $ready; then
  if [[ "$os" == Darwin ]]; then
   launchctl print system/HomeImages >&2 || true
-  for logfile in /var/log/HomeImages.err.log /var/log/HomeImages.out.log; do
+  for logfile in "$data/HomeImages.err.log" "$data/HomeImages.out.log" /var/log/HomeImages.err.log /var/log/HomeImages.out.log; do
    if [[ -f "$logfile" ]]; then tail -100 "$logfile" >&2; fi
   done
  else

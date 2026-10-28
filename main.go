@@ -181,7 +181,18 @@ func main() {
 		*user = `NT AUTHORITY\LocalService`
 	}
 	p := &program{config: c}
-	svc, err := service.New(p, serviceConfig(absolute, *user, *userService))
+	daemonConfig := serviceConfig(absolute, *user, *userService)
+	if runtime.GOOS == "darwin" {
+		// launchd opens these streams as the configured account before exec.
+		// Its default /var/log directory is not writable by that account.
+		daemonConfig.Option["LogDirectory"] = c.DataDir
+		if *control == "install" {
+			if err := os.MkdirAll(c.DataDir, 0750); err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+	svc, err := service.New(p, daemonConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
