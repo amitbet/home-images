@@ -84,10 +84,9 @@ try {
   Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; StartTime=(Get-Date).AddMinutes(-10)} -MaxEvents 10 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,Message | Out-Host
  }
  $serviceLog = Join-Path $data 'home-images.log'
- if (Test-Path -LiteralPath $serviceLog) {
-  if ($IsWindows) { Get-Content -LiteralPath $serviceLog -Tail 100 | Out-Host }
-  else { & sudo tail -100 $serviceLog }
- }
+ if ($IsWindows) {
+  if (Test-Path -LiteralPath $serviceLog) { Get-Content -LiteralPath $serviceLog -Tail 100 | Out-Host }
+ } else { & sudo tail -100 $serviceLog 2>$null }
  throw
 } finally {
  if (Test-Path -LiteralPath $binary) {

@@ -137,7 +137,18 @@ for ((attempt=0;attempt<60;attempt++)); do
  if response=$(curl --silent --fail --noproxy '*' --max-time 2 "http://$health_host:$port/health") && python3 -c 'import json,sys; h=json.loads(sys.argv[1]); assert h["status"]=="ok" and h["root_available"]; assert sys.argv[2]=="go" or h["jpeg_decoder"]=="turbojpeg"' "$response" "$decoder" 2>/dev/null; then ready=true; break; fi
  sleep 1
 done
-$ready || die 'Service did not become healthy with the configured decoder; restoring previous installation.'
+if ! $ready; then
+ if [[ "$os" == Darwin ]]; then
+  launchctl print system/HomeImages >&2 || true
+  for logfile in /var/log/HomeImages.err.log /var/log/HomeImages.out.log; do
+   if [[ -f "$logfile" ]]; then tail -100 "$logfile" >&2; fi
+  done
+ else
+  journalctl -u HomeImages --no-pager -n 50 >&2 || true
+ fi
+ if [[ -f "$data/home-images.log" ]]; then tail -100 "$data/home-images.log" >&2; fi
+ die 'Service did not become healthy with the configured decoder; restoring previous installation.'
+fi
 echo "Installed $prefix/home-images; config preserved at $config"
 if $moved; then echo "Previous program and codec retained at $backup"; fi
 echo "Health: http://$health_host:$port/health"
