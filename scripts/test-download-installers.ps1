@@ -35,9 +35,12 @@ $listener.Start()
 $port = $listener.LocalEndpoint.Port
 $listener.Stop()
 $python = if ($onWindows) { (Get-Command python).Source } else { (Get-Command python3).Source }
-$start = @{FilePath=$python; ArgumentList=@('-m','http.server',"$port",'--bind','127.0.0.1'); WorkingDirectory=$serve; PassThru=$true; RedirectStandardOutput=(Join-Path $base 'server.out'); RedirectStandardError=(Join-Path $base 'server.err')}
-if ($onWindows) { $start.WindowStyle = 'Hidden' }
-$server = Start-Process @start
+# Run the server through a PowerShell job so native process startup/output is
+# handled consistently on macOS as well as Windows and Linux.
+$server = Start-Job -ScriptBlock {
+ param($Interpreter,$Directory,$ListenPort)
+ & $Interpreter -u -m http.server $ListenPort --bind 127.0.0.1 --directory $Directory
+} -ArgumentList $python,$serve,$port
 $baseUrl = "http://127.0.0.1:$port"
 function Run-Download([bool]$ShouldSucceed) {
  $success = $false
@@ -60,8 +63,8 @@ try {
   try { Invoke-WebRequest "$baseUrl/SHA256SUMS" -UseBasicParsing -TimeoutSec 1 | Out-Null; $ready=$true; break } catch { Start-Sleep -Milliseconds 100 }
  }
  if (-not $ready) {
-  Write-Host "Fixture server executable: $python; port: $port; exited: $($server.HasExited)"
-  Get-Content (Join-Path $base 'server.out'),(Join-Path $base 'server.err') -ErrorAction SilentlyContinue | Out-Host
+  Write-Host "Fixture server executable: $python; port: $port; state: $($server.State)"
+  Receive-Job $server -ErrorAction Continue | Out-Host
   throw 'Fixture HTTP server did not start'
  }
  Run-Download $true
@@ -73,7 +76,8 @@ try {
  Run-Download $false
  Write-Host 'Verified release download, argument forwarding, corrupt archive rejection and missing checksum rejection'
 } finally {
- Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+ Stop-Job $server -ErrorAction SilentlyContinue
+ Remove-Job $server -Force -ErrorAction SilentlyContinue
  $env:HOME_IMAGES_BOOTSTRAP_TEST_MARKER = $oldMarker
  $env:HOME_IMAGES_RELEASE_BASE_URL = $oldBase
 }
