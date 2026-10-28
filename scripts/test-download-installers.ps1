@@ -35,13 +35,22 @@ $listener.Start()
 $port = $listener.LocalEndpoint.Port
 $listener.Stop()
 $python = if ($onWindows) { (Get-Command python).Source } else { (Get-Command python3).Source }
+$serverScript = Join-Path $base 'http-server.py'
+# http.server resolves getfqdn() before listen(). That lookup stalls on hosted
+# macOS 15; this fixture binds a numeric loopback address and needs no DNS.
+@'
+import runpy
+import socket
+socket.getfqdn = lambda name='': name
+runpy.run_module('http.server', run_name='__main__')
+'@ | Set-Content -LiteralPath $serverScript -Encoding UTF8
 # Run the server through a PowerShell job so native process startup/output is
 # handled consistently on macOS as well as Windows and Linux.
 $server = Start-Job -ScriptBlock {
- param($Interpreter,$Directory,$ListenPort)
+ param($Interpreter,$Script,$Directory,$ListenPort)
  Write-Output "Starting fixture server: $Interpreter on $ListenPort in $Directory"
- & $Interpreter -u -m http.server $ListenPort --bind 127.0.0.1 --directory $Directory
-} -ArgumentList $python,$serve,$port
+ & $Interpreter -u $Script $ListenPort --bind 127.0.0.1 --directory $Directory
+} -ArgumentList $python,$serverScript,$serve,$port
 $baseUrl = "http://127.0.0.1:$port"
 function Run-Download([bool]$ShouldSucceed) {
  $success = $false
