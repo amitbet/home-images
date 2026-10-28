@@ -565,6 +565,19 @@ grouped with similarity ranking preserved within each group. Responses report
 `ranked_limit`, `unique_total`, membership `total`, and `indexed_candidates`.
 Group direction changes group order while photo order remains most similar first.
 Grouped pagination covers every membership, including offsets above 1,000.
+`GET /api/people?summary=true` serves the unfiltered People overview from an
+in-memory summary warmed at startup and refreshed every 30 seconds. It retains
+exact distinct-photo counts and capture years for the snapshot, and returns
+`summary_age_ms`. API mutations invalidate it immediately; `refresh=1` forces a
+rebuild. Name searches, curation filters, and requests without `summary=true`
+continue to query current data. This cache contains metadata, not embeddings.
+
+`GET /api/people/names?q=...&limit=50` returns `{items:[{id,name}]}` for
+name autocomplete in both face-tagging and group-review dialogs. It returns only
+named, unmerged people with current visible faces, supports literal substring
+matching and curation filters, and avoids photo-count/date aggregation. Saving an
+existing name in either dialog merges the group into that person.
+
 `GET /api/filter-suggestions?kind=tag|place|folder&q=...` supplies up to 30
 literal substring suggestions from visible indexed photos. Place suggestions
 and filtering include local GeoNames labels, with manual location overrides.

@@ -353,7 +353,7 @@ function filterChips() {
 let searchController;
 let facesController;
 let playbackController;
-async function load() {
+async function load(forcePeopleRefresh = false) {
   if (searchController) searchController.abort();
   searchController = typeof AbortController === "function" ? new AbortController() : null;
   const signal = searchController?.signal;
@@ -386,6 +386,8 @@ async function load() {
             q: $("query").value.trim(),
             limit: 48,
             offset: state.offset,
+            summary: true,
+            refresh: forcePeopleRefresh === true ? 1 : 0,
           }),
         undefined,
         signal,
@@ -911,6 +913,47 @@ async function mergeOptions() {
     $("editError").textContent = e.message;
   }
 }
+// Both naming dialogs share the lightweight autocomplete and cancellation rules.
+function nameAutocomplete(inputId, listId, dialogId, onMatches) {
+  const input = $(inputId), list = $(listId);
+  let timer, controller, generation = 0;
+  const cancel = () => {
+    clearTimeout(timer);
+    controller?.abort();
+    generation++;
+  };
+  const load = async () => {
+    cancel();
+    const current = generation, name = input.value.trim();
+    controller = new AbortController();
+    try {
+      const result = await api("/api/people/names?limit=50&q=" + encodeURIComponent(name), undefined, controller.signal);
+      if (current !== generation || input.value.trim() !== name) return;
+      list.replaceChildren(...result.items.map(p => new Option(p.name)));
+      onMatches(result.items);
+    } catch (e) {
+      if (e.name !== "AbortError" && current === generation) onMatches([]);
+    }
+  };
+  const reset = () => {
+    cancel();
+    list.replaceChildren();
+    onMatches([]);
+  };
+  input.addEventListener("input", () => {
+    reset();
+    timer = setTimeout(load, 200);
+  });
+  $(dialogId).addEventListener("close", cancel);
+  return {load, reset, cancel};
+}
+const personNameAutocomplete = nameAutocomplete("personName", "personNameSuggestions", "personEditor", matches => {
+  const name = $("personName").value.trim().toLowerCase();
+  const owner = matches.find(p => p.id !== state.editing?.id && p.name.toLowerCase() === name);
+  $("personNameHint").textContent = owner
+    ? `Saving merges this group into ${owner.name}.`
+    : "An existing name combines this group with that person.";
+});
 async function editPerson(p) {
   state.editing = p;
   mergeSelection.clear();
@@ -922,12 +965,14 @@ async function editPerson(p) {
   $("undoNote").hidden = true;
   loadMergeUndo(p);
   $("personName").value = p.name || "";
+  personNameAutocomplete.reset();
   $("editError").textContent = "";
   $("mergeOutcome").hidden=true;$("mergeOutcome").replaceChildren();
   $("mergeFooterOutcome").hidden=true;$("mergeFooterOutcome").textContent="";
   $("mergeSearch").value = "";
   modal("personEditor");
   $("personName").focus();
+  personNameAutocomplete.load();
   if(p.face_id) mergeOptions();
   $("manualMergeSearch").open = !!p.face_id;
   loadPersonSuggestions(p);
@@ -938,14 +983,28 @@ $("mergeSearch").oninput = () => {
 };
 $("personForm").onsubmit = async (e) => {
   e.preventDefault();
+  if ($("personForm").getAttribute("aria-busy") === "true") return;
+  const button = $("personForm").querySelector("[type=submit]");
+  button.disabled = true;
+  $("personForm").setAttribute("aria-busy", "true");
+  personNameAutocomplete.cancel();
   try {
     const name = $("personName").value.trim();
-    await api("/api/people/" + state.editing.id, { name });
-    renamePerson(state.editing.id, name);
+    const result = await api("/api/people/" + state.editing.id, { name, match_existing: true });
+    if (result.merged_into) {
+      mergePerson(state.editing, {id: result.merged_into, name: result.name});
+      mergeGridDirty = true;
+    } else {
+      renamePerson(state.editing.id, result.name);
+    }
     closeModal("personEditor");
-    toast("Person name saved");
+    toast(result.merged_into ? `Group merged into ${result.name}` : "Person name saved");
+    refreshStatus();
   } catch (e) {
     $("editError").textContent = e.message;
+  } finally {
+    button.disabled = false;
+    $("personForm").removeAttribute("aria-busy");
   }
 };
 $("mergePerson").onclick = () => {
@@ -1282,7 +1341,10 @@ async function openImage(i, external = null) {
   void loadImageFaces(photo, gen);
 }
 const faceName = (f) => f.name || "Person " + f.person_id;
-let faceSuggestTimer;
+const faceNameAutocomplete = nameAutocomplete("faceName", "faceSuggestions", "faceEditor", matches => {
+  state.faceMatches = matches;
+  faceHint();
+});
 state.faces = [];
 state.faceMap = {};
 state.showFaces = localStorage.getItem("showFaces") !== "false";
@@ -1490,23 +1552,6 @@ function drawFaceCrop(f, img) {
     cy = ((f.box.y1 + f.box.y2) / 2) * sy;
   ctx.drawImage(img, cx - side / 2, cy - side / 2, side, side, 0, 0, canvas.width, canvas.height);
 }
-async function faceSuggestions() {
-  const face = state.editingFace, name = $("faceName").value.trim();
-  try {
-    const result = await api(
-      "/api/people?limit=50&q=" + encodeURIComponent(name),
-    );
-    if (state.editingFace !== face || $("faceName").value.trim() !== name) return;
-    state.faceMatches = result.items.filter((p) => p.name);
-    $("faceSuggestions").replaceChildren(
-      ...state.faceMatches.map((p) => new Option(p.name)),
-    );
-  } catch (e) {
-    if (state.editingFace !== face || $("faceName").value.trim() !== name) return;
-    state.faceMatches = [];
-  }
-  faceHint();
-}
 // The existing group, other than this face's own, already using the typed name.
 function faceNameOwner() {
   const name = $("faceName").value.trim().toLowerCase();
@@ -1531,7 +1576,9 @@ function editFace(f, img, imageId) {
   state.editingFace = f;
   state.editingFaceImage = imageId;
   state.faceMatches = [];
+  $("faceSuggestions").replaceChildren();
   $("faceName").value = f.name || "";
+  faceNameAutocomplete.reset();
   $("faceError").textContent = "";
   $("faceHint").textContent = "";
   $("faceScopeGroup").textContent = "Every photo of " + faceName(f);
@@ -1540,13 +1587,8 @@ function editFace(f, img, imageId) {
   modal("faceEditor");
   $("faceName").focus();
   $("faceName").select();
-  faceSuggestions();
+  faceNameAutocomplete.load();
 }
-$("faceName").oninput = () => {
-  faceHint();
-  clearTimeout(faceSuggestTimer);
-  faceSuggestTimer = setTimeout(faceSuggestions, 200);
-};
 for (const r of document.querySelectorAll("input[name=faceScope]"))
   r.onchange = faceHint;
 $("cancelFace").onclick = () => closeModal("faceEditor");
@@ -1562,7 +1604,7 @@ $("faceForm").onsubmit = async (e) => {
   button.textContent = "Saving…";
   $("faceForm").setAttribute("aria-busy", "true");
   $("faceError").textContent = "";
-  clearTimeout(faceSuggestTimer);
+  faceNameAutocomplete.cancel();
   try {
     let message;
     if (scope === "face") {
@@ -1859,7 +1901,7 @@ $("clearPerson").onclick = () => {
   load();
 };
 $("refresh").onclick = () => {
-  load();
+  load(true);
   refreshStatus();
 };
 $("previous").onclick = () => {

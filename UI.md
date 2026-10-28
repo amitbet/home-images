@@ -41,6 +41,11 @@ middle-click and Ctrl/Cmd-click open the corresponding photo/person in a new tab
 
 ## People and indexing
 
+The People overview uses summaries warmed at startup and refreshed every 30 seconds.
+New background indexing can take one refresh to appear. Renames, merges, face moves,
+and curation edits invalidate the overview immediately. **Refresh results** forces a
+fresh summary. Name searches and filtered API requests continue to read current data.
+
 People appear as the ML worker processes photos. Open a group to see its photos, then
 combine that person with content, folder, date, and annotation filters. Give groups names
 and search those names in **People**. Use **Edit name / merge** to combine groups; the
@@ -54,6 +59,12 @@ never merge automatically. **Not the same person** persistently dismisses the pa
 in both directions. Groups already appearing together in a photo are excluded from
 suggestions. Similarity uses retained group representatives, not every individual
 face; age and appearance changes may still require a manual search.
+
+The Name field offers the same existing-name autocomplete as **Tag this face**.
+Saving an existing name merges the current group into that person; saving a new
+name renames the group. Name matching is resolved during the save, even when
+autocomplete has not finished. Both dialogs use a lightweight name lookup without
+photo-count or capture-year aggregation.
 
 Open a photo and click a face name to access **Move this face**. Select the correct
 person below and confirm; only that face moves. The correction survives reindexing of the unchanged photo with

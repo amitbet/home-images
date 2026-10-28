@@ -22,6 +22,7 @@ func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	mux.HandleFunc("/api/search", wrap(a.search))
 	mux.HandleFunc("/api/playback/next", wrap(a.playbackNext))
 	mux.HandleFunc("/api/people", wrap(a.people))
+	mux.HandleFunc("GET /api/people/names", wrap(a.personNames))
 	mux.HandleFunc("/api/people/undo", a.mutation(a.undoPersonMerge))
 	mux.HandleFunc("/api/people/merge-history", wrap(a.personMergeHistory))
 	mux.HandleFunc("/api/people/{person}/suggestions", wrap(a.personSuggestions))
@@ -340,6 +341,12 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if utf8.RuneCountInString(q) > 100 {
 		return bad(400, "Name query too long")
+	}
+	if q == "" {
+		if r.URL.Query().Get("summary") == "true" && defaultPeopleFilters(r) {
+			return a.cachedPeoplePage(w, r, limit, offset)
+		}
+		return a.peoplePage(w, r, limit, offset)
 	}
 	base := ` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error='' AND p.merged_into IS NULL AND p.name LIKE ? ESCAPE '!'`
 	args := []any{a.models, "%" + escapeLike(q) + "%"}

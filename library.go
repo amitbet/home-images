@@ -218,6 +218,9 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	summariesDone := make(chan struct{})
+	go func() { defer close(summariesDone); l.ai.warmPeopleSummaries(ctx) }()
+	defer func() { <-summariesDone }()
 	peopleDone := make(chan struct{})
 	go func() { defer close(peopleDone); l.warmPeopleThumbnails(ctx) }()
 	defer func() { <-peopleDone }()

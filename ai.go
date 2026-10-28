@@ -26,6 +26,9 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
+	peopleMu          sync.Mutex
+	peopleSummary     *peopleSnapshot
+	peopleBuilding    chan struct{}
 	statusMu          sync.Mutex
 	statusCounts      indexCounts
 	statusCountedAt   time.Time

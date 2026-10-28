@@ -325,10 +325,13 @@
         <label for="personName">Name</label
         ><input
           id="personName"
+          list="personNameSuggestions"
           maxlength="100"
           placeholder="e.g. Dana"
           autocomplete="off"
         />
+        <datalist id="personNameSuggestions"></datalist>
+        <p id="personNameHint" aria-live="polite"></p>
         <div class="dialog-actions">
           <button type="button" id="cancelPerson" class="secondary">
             Done</button
