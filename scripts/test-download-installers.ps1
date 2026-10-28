@@ -59,7 +59,11 @@ try {
  for ($attempt=0; $attempt -lt 30; $attempt++) {
   try { Invoke-WebRequest "$baseUrl/SHA256SUMS" -UseBasicParsing -TimeoutSec 1 | Out-Null; $ready=$true; break } catch { Start-Sleep -Milliseconds 100 }
  }
- if (-not $ready) { throw 'Fixture HTTP server did not start' }
+ if (-not $ready) {
+  Write-Host "Fixture server executable: $python; port: $port; exited: $($server.HasExited)"
+  Get-Content (Join-Path $base 'server.out'),(Join-Path $base 'server.err') -ErrorAction SilentlyContinue | Out-Host
+  throw 'Fixture HTTP server did not start'
+ }
  Run-Download $true
  if ((Get-Content $marker -Raw) -notlike '*photos with spaces*') { throw 'Installer arguments were not forwarded' }
  Remove-Item -LiteralPath $marker

@@ -23,6 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-python@v5
+        if: runner.os != 'Windows'
+        with:
+          python-version: '3.13'
       - name: Package pinned native JPEG codec (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -46,11 +50,6 @@ jobs:
           "HOMEIMAGES_TEST_TURBO_LIBRARY=$((Resolve-Path "dist/package/$codec").Path)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - run: go test -count=1 ./...
       - run: go vet ./...
-      - name: Race tests
-        if: runner.os != 'Windows'
-        env:
-          CGO_ENABLED: '1'
-        run: go test -race -count=1 ./...
       - name: Native daemon lifecycle smoke test
         shell: pwsh
         run: ./scripts/test-daemon.ps1
@@ -66,6 +65,11 @@ jobs:
       - name: Test install, upgrade, restart and data preservation
         shell: pwsh
         run: ./scripts/test-installers.ps1
+      - name: Race tests
+        if: runner.os != 'Windows'
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 ./...
       - uses: actions/upload-artifact@v4
         with:
           name: home-images-package-${{ matrix.os }}-${{ matrix.arch }}
