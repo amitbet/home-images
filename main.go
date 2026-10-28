@@ -92,6 +92,9 @@ func main() {
 	importLocations := flag.String("import-locations", "", "Import matching offline location results with the service stopped")
 	importIndex := flag.String("import-python-index", "", "One-time read-only import of a previous Python SQLite index")
 	aiPreview := flag.String("ai-preview", "", "Internal: generate an indexing preview using config on stdin")
+	offlineCatalog := flag.String("geocode-catalog", "", "Read-only stopped-service catalog snapshot for offline backfill")
+	offlineOutput := flag.String("geocode-output", "", "New results SQLite file for offline backfill")
+	geoDataset := flag.String("geonames-dir", "", "Directory containing GeoNames city, region and country files")
 	dbInfo := flag.String("db-info", "", "Inspect catalog schema version without opening the service")
 	migratePath := flag.String("migrate-catalog", "", "Migrate a stopped-service catalog without accessing photo originals")
 	compact := flag.Bool("compact", false, "Reclaim free pages after --migrate-catalog (requires temporary disk space)")
@@ -132,6 +135,18 @@ func main() {
 		fmt.Printf("Catalog version: %d (supported: %d)\n", v, catalogVersion)
 		return
 	}
+	if *offlineCatalog != "" {
+		if *offlineOutput == "" || *geoDataset == "" {
+			log.Fatal("geocode-output and geonames-dir are required")
+		}
+		count, located, err := backfillLocations(context.Background(), *offlineCatalog, *offlineOutput, *geoDataset)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Processed %d photos; %d readable locations; results: %s\n", count, located, *offlineOutput)
+		return
+	}
+
 	if *aiPreview != "" {
 		if err := runAIPreview(*aiPreview); err != nil {
 			fmt.Fprintln(os.Stderr, err)

@@ -195,6 +195,13 @@ func downloadGeo(ctx context.Context, dir string) error {
 // have Ref=0 and must never turn photos without GPS into Gulf of Guinea locations.
 func photoGPS(p Photo) (float64, float64, bool) {
 	gps, _ := p.Exif["GPS"].(map[string]any)
+	// imagemeta's JSON marshaler emits signed decimal coordinates directly.
+	if lat, a := gps["Latitude"].(float64); a {
+		if lon, b := gps["Longitude"].(float64); b && !math.IsNaN(lat) && !math.IsNaN(lon) && math.Abs(lat) <= 90 && math.Abs(lon) <= 180 {
+			return lat, lon, true
+		}
+	}
+
 	coordinate := func(key string, positive, negative float64) (float64, bool) {
 		v, ok := gps[key].(map[string]any)
 		if !ok {

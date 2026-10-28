@@ -489,6 +489,26 @@ Data attribution: [GeoNames](https://www.geonames.org/), licensed under
 The local lookup formats city, region and country names from these source files.
 
 
+Offline backfill on another machine can use a consistent, stopped-service SQLite
+snapshot without the original photos:
+
+```sh
+home-images --geocode-catalog snapshot.sqlite3 --geocode-output locations.sqlite3 --geonames-dir ./geonames
+```
+
+The output must be a new file and contains only derived labels, IDs, signatures
+and source root identity. The snapshot is opened read-only/immutable; do not use a
+live WAL database for this command. On the original server, stop HomeImages and run:
+
+```sh
+home-images --config config.json --import-locations locations.sqlite3
+```
+
+Then restart the service. Import is transactional, requires the same photo root,
+and skips IDs/signatures that no longer match. It does not overwrite manual labels
+or original photo metadata. Use the updated executable to serve `auto_location`.
+
+
 ## Catalog storage and migration
 
 Catalog version **1** stores lossless JSON metadata as zlib-compressed BLOBs with

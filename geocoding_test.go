@@ -27,6 +27,9 @@ func TestPhotoGPSFormats(t *testing.T) {
 		lat, lon float64
 		ok       bool
 	}{
+		{`{"GPS":{"Latitude":-32.1,"Longitude":-34.8}}`, -32.1, -34.8, true},
+		{`{"GPS":{"Latitude":0,"Longitude":0}}`, 0, 0, true},
+		{`{"GPS":{"Date":"0001-01-01T00:00:00Z"}}`, 0, 0, false},
 		{`{"GPS":{"Latitude":{"Value":32.1,"Ref":1},"Longitude":{"Value":34.8,"Ref":3}}}`, 32.1, 34.8, true},
 		{`{"GPS":{"Latitude":{"Value":32.1,"Ref":2},"Longitude":{"Value":34.8,"Ref":4}}}`, -32.1, -34.8, true},
 		{`{"GPS":{"Latitude":{"Value":0,"Ref":0},"Longitude":{"Value":0,"Ref":0}}}`, 0, 0, false},
@@ -82,7 +85,8 @@ func TestGeocodeBackfillOverridesAndChangedPhotos(t *testing.T) {
 	}
 }
 
-func TestLoadGeoDataset(t *testing.T) {
+func testGeoDataset(t *testing.T) string {
+	t.Helper()
 	dir := t.TempDir()
 	if e := os.WriteFile(filepath.Join(dir, "countryInfo.txt"), []byte("# comment\nIT\tITA\t380\tIT\tItaly\n"), 0600); e != nil {
 		t.Fatal(e)
@@ -107,6 +111,11 @@ func TestLoadGeoDataset(t *testing.T) {
 		t.Fatal(e)
 	}
 	file.Close()
+	return dir
+}
+
+func TestLoadGeoDataset(t *testing.T) {
+	dir := testGeoDataset(t)
 	tree, e := loadGeo(dir)
 	if e != nil {
 		t.Fatal(e)
@@ -114,4 +123,51 @@ func TestLoadGeoDataset(t *testing.T) {
 	if got := tree.lookup(43.77, 11.25); got != "Florence, Tuscany, Italy" {
 		t.Fatal(got)
 	}
+}
+
+func TestOfflineGeocodeAndSignatureImport(t *testing.T) {
+	l, s, _ := fixture(t)
+	ctx := context.Background()
+	job := testJob(t, l, "a.jpg")
+	var p Photo
+	if e := json.Unmarshal([]byte(job.Metadata), &p); e != nil {
+		t.Fatal(e)
+	}
+	p.Exif = map[string]any{"GPS": map[string]any{"Latitude": 43.77, "Longitude": 11.25}}
+	raw, _ := json.Marshal(p)
+	if _, e := l.db.Exec("UPDATE images SET metadata=? WHERE id=?", string(raw), job.ID); e != nil {
+		t.Fatal(e)
+	}
+	snapshot := filepath.Join(t.TempDir(), "snapshot.sqlite3")
+	if _, e := l.db.Exec("VACUUM INTO ?", snapshot); e != nil {
+		t.Fatal(e)
+	}
+	output := filepath.Join(t.TempDir(), "locations.sqlite3")
+	n, located, e := backfillLocations(ctx, snapshot, output, testGeoDataset(t))
+	if e != nil || n != 5 || located != 1 {
+		t.Fatalf("backfill %d %d %v", n, located, e)
+	}
+	if _, _, e = backfillLocations(ctx, snapshot, output, testGeoDataset(t)); e == nil {
+		t.Fatal("accepted existing output")
+	}
+	// One image changed after snapshot creation; its result must be skipped.
+	changed := testJob(t, l, "b.jpg")
+	if _, e = l.db.Exec("UPDATE images SET signature='new' WHERE id=?", changed.ID); e != nil {
+		t.Fatal(e)
+	}
+	postTest(t, s, "/api/curation/"+job.ID, `{"location":"My Florence trip"}`)
+	if imported, err := l.ImportLocations(ctx, output); err != nil || imported != 4 {
+		t.Fatalf("import %d %v", imported, err)
+	}
+	var a annotation
+	getJSON(t, s, "/api/curation/"+job.ID, &a)
+	if a.AutoLocation != "Florence, Tuscany, Italy" || a.Location != "My Florence trip" {
+		t.Fatal(a)
+	}
+	original := l.rootPath
+	l.rootPath = "different-root"
+	if _, e = l.ImportLocations(ctx, output); e == nil {
+		t.Fatal("accepted wrong root")
+	}
+	l.rootPath = original
 }
