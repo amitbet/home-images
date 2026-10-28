@@ -39,6 +39,7 @@ $python = if ($onWindows) { (Get-Command python).Source } else { (Get-Command py
 # handled consistently on macOS as well as Windows and Linux.
 $server = Start-Job -ScriptBlock {
  param($Interpreter,$Directory,$ListenPort)
+ Write-Output "Starting fixture server: $Interpreter on $ListenPort in $Directory"
  & $Interpreter -u -m http.server $ListenPort --bind 127.0.0.1 --directory $Directory
 } -ArgumentList $python,$serve,$port
 $baseUrl = "http://127.0.0.1:$port"
@@ -60,11 +61,13 @@ function Run-Download([bool]$ShouldSucceed) {
 try {
  $ready = $false
  for ($attempt=0; $attempt -lt 30; $attempt++) {
-  try { Invoke-WebRequest "$baseUrl/SHA256SUMS" -UseBasicParsing -TimeoutSec 1 | Out-Null; $ready=$true; break } catch { Start-Sleep -Milliseconds 100 }
+  try { Invoke-WebRequest "$baseUrl/SHA256SUMS" -UseBasicParsing -TimeoutSec 1 | Out-Null; $ready=$true; break } catch { $lastRequestError = $_; Start-Sleep -Milliseconds 100 }
  }
  if (-not $ready) {
   Write-Host "Fixture server executable: $python; port: $port; state: $($server.State)"
+  Write-Host "Last readiness request: $lastRequestError"
   Receive-Job $server -ErrorAction Continue | Out-Host
+  if (-not $onWindows) { & curl --noproxy '*' --verbose --max-time 3 "$baseUrl/SHA256SUMS"; & pgrep -lf 'http.server' }
   throw 'Fixture HTTP server did not start'
  }
  Run-Download $true

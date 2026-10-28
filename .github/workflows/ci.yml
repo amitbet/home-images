@@ -27,6 +27,9 @@ jobs:
         if: runner.os != 'Windows'
         with:
           python-version: '3.13'
+      - name: Test release download and checksum rejection
+        shell: pwsh
+        run: ./scripts/test-download-installers.ps1
       - name: Package pinned native JPEG codec (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -59,9 +62,6 @@ jobs:
           TARGET_OS: ${{ matrix.os }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: ./scripts/package-release.ps1 -OS $env:TARGET_OS -Architecture $env:TARGET_ARCH
-      - name: Test release download and checksum rejection
-        shell: pwsh
-        run: ./scripts/test-download-installers.ps1
       - name: Test install, upgrade, restart and data preservation
         shell: pwsh
         run: ./scripts/test-installers.ps1
