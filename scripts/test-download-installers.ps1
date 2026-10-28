@@ -50,6 +50,9 @@ function Run-Download([bool]$ShouldSucceed) {
  }
  if ($success -ne $ShouldSucceed) { throw "Download installer success=$success, expected=$ShouldSucceed" }
  if ((Test-Path $marker) -ne $ShouldSucceed) { throw 'Invalid download reached the bundled installer' }
+ # Rejection tests intentionally return nonzero. Do not leak that expected
+ # native exit code to GitHub's PowerShell wrapper after assertions pass.
+ $global:LASTEXITCODE = 0
 }
 try {
  $ready = $false
