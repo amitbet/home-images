@@ -46,6 +46,6 @@ for license in LICENSE.md README.ijg README.md; do
 done
 if [[ $(uname -s) == Darwin ]]; then
   mach_arch=arm64; [[ "$arch" != amd64 ]] || mach_arch=x86_64
-  lipo -verify_arch "$mach_arch" "$out/$name"
+  lipo "$out/$name" -verify_arch "$mach_arch"
 fi
 echo "$out/$name"
