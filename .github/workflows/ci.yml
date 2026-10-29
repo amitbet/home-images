@@ -110,8 +110,10 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$null,[ref]$parseErrors) | Out-Null
             if ($parseErrors) { throw ($parseErrors | Out-String) }
           }
+  # Tags publish their own release; a full manual run on main publishes
+  # v0.0.<run number>.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.all_platforms && github.ref == 'refs/heads/main')
     needs: [native, lint-installers]
     runs-on: ubuntu-22.04
     permissions:
@@ -126,7 +128,7 @@ jobs:
       - name: Publish bundles, checksums and download installers
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.{0}', github.run_number) }}
         shell: bash
         run: |
           cp install.sh install.ps1 release/
@@ -134,6 +136,8 @@ jobs:
           sha256sum home-images-*.tar.gz home-images-*.zip > SHA256SUMS
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" ./* --clobber
-          else
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
             gh release create "$RELEASE_TAG" ./* --verify-tag --generate-notes
+          else
+            gh release create "$RELEASE_TAG" ./* --target "$GITHUB_SHA" --generate-notes
           fi
