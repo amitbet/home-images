@@ -9,6 +9,7 @@ require (
 	github.com/evanoberholster/imagemeta v1.0.0
 	github.com/kardianos/service v1.3.0
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.0

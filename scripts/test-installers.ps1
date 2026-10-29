@@ -94,6 +94,7 @@ try {
    & $binary --config $config --service stop 2>$null
    & $binary --config $config --service uninstall 2>$null
    Get-NetFirewallRule -Name HomeImages-LAN -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+   Get-NetFirewallRule -Name HomeImages-Syncthing-LAN -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   } else {
    & sudo $binary --config $config --service stop 2>$null
    & sudo $binary --config $config --service uninstall 2>$null

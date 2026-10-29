@@ -13,9 +13,77 @@ Features:
 - Upright, resized JPEG previews, transparency composited over white, ETags, and original-file range requests.
 - Persistent SQLite index, background incremental scans, and literal text search across paths/metadata.
 - Embedded photo browser with content search and editable named face groups.
+- Optional Android backups through a managed Syncthing receiver and Syncthing-Fork QR pairing.
 - Optional remote Immich ML inference; no Docker or ML runtime required on this server.
 - Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews.
 - Bounded rendering concurrency/pixel counts, root-confined file handles, graceful shutdown, and rotating logs.
+
+## Android phone backup
+
+Open **Phone backup** in the library sidebar (`/settings` or `/phone-setup`)
+and choose **Enable phone backup**. Home Images downloads a pinned Syncthing
+v2.1.0 release from upstream, verifies its SHA-256 against a checksum included
+in our code, and runs it as a supervised child process. No separate OS service
+or manual Syncthing configuration is needed. First setup requires Internet
+access to GitHub. Linux, macOS and Windows on amd64/arm64 are supported.
+
+1. Install the free [Syncthing-Fork Android app](https://f-droid.org/packages/com.github.catfriend1.syncthingfork/)
+   ([upstream APK releases](https://github.com/researchxxl/syncthing-android/releases)).
+2. In its **Devices** tab, add a device and scan the receiver QR shown by Home
+   Images. This is a Syncthing device-ID QR, scanned inside the app. On the same
+   phone, expand **Connecting from this phone?** to copy the receiver ID instead.
+3. Match the requesting device ID to the phone's **Show device ID**, name the
+   phone and approve it in Home Images.
+4. Share the phone's `DCIM/Camera` folder with Home Images, choosing **Send Only**
+   on the phone. Approve the folder offer with **Back up this folder** in Home
+   Images. The receiver configures a private **Receive Only** staging folder.
+5. Allow the app to run in the background; configure Wi-Fi-only run conditions
+   in the phone app if desired. Both devices must be online for transfers.
+
+Existing Syncthing installations are left alone: we never reuse their home
+directory, device identity, database, service, startup configuration or API key.
+Our executable and its upstream notices live in
+`data_dir/syncthing/bin/v2.1.0/`, private instance state in
+`data_dir/syncthing/instance/`, pairing/settings in
+`data_dir/syncthing/home-images.json`, and staging files in
+`data_dir/syncthing/incoming/`. Our TCP transfer port defaults to 22001 and falls
+back to an available port if occupied; the private management API binds only to
+a free loopback port. Normal Syncthing discovery and encrypted relays are
+available. Our instance's automatic updater is disabled; Home Images controls
+the pinned version. The service starts the receiver automatically after restart
+if phone backup was enabled, retries failed starts/crashes, and shuts it down
+before stopping.
+
+Completed media files are copied from idle, fully synchronized staging folders
+into `root/Phone backups/<phone>/<folder>/`. Content hashes in filenames preserve
+changed versions without overwriting earlier copies. Files are published only
+after a complete copy; an SQLite manifest makes repeated imports idempotent.
+Phone deletions affect staging only; they never delete archive files. Check the
+phone's last backup and wait for sync/import completion before deleting originals.
+This retains **both staging and archive copies**, so allow disk space for both.
+Removing a phone or disabling backup preserves its archive, staging files and
+identity; it does not uninstall or stop any other Syncthing installation.
+Videos and camera sidecars are archived even where the gallery cannot display them.
+
+The service needs write access to `root/Phone backups` only. Updated installers
+create that directory and grant its service account access, while retaining
+read-only access to existing originals. For an existing installation, rerun the
+installer or create/grant that subfolder manually. Keep `data_dir/syncthing`
+separate from the photo library. Windows installation adds a local-subnet TCP
+firewall exception scoped to our pinned executable; on other firewalled hosts,
+allow that executable or its displayed transfer port on the home network.
+
+Phone administration follows the existing trusted-LAN settings model: it requires
+same-origin requests and the `X-Home-Images: 1` header, and does not expose our
+Syncthing API key. Do not expose the Home Images administration UI directly to
+the Internet. The QR is a public device identity, not an upload credential;
+both device and folder offers require explicit approval.
+
+To exercise real pairing, transfer, deletion retention, crash recovery and
+restart behavior locally, run
+`HOMEIMAGES_TEST_SYNCTHING_DOWNLOAD=1 go test -run TestSyncthingRealTransferLifecycle -count=1 -timeout=5m`.
+Alternatively set `HOMEIMAGES_TEST_SYNCTHING_EXE` to an already downloaded
+Syncthing v2.1.0 executable. CI runs this check on every supported build platform.
 
 ## Build and run
 

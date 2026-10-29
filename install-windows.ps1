@@ -65,6 +65,11 @@ if ([IO.Path]::GetFullPath($config.data_dir).TrimEnd('\') -ne $DataDirectory) { 
 # Reapplying an unchanged photo-tree ACL can otherwise make upgrades very slow.
 Ensure-ServiceAccess $DataDirectory Modify '*S-1-5-19:(OI)(CI)(M)'
 Ensure-ServiceAccess $config.root ReadAndExecute '*S-1-5-19:(OI)(CI)(RX)'
+# Grant writes only to the new archive, never to the existing photo collection.
+$phoneArchive = Join-Path $config.root 'Phone backups'
+if ((Test-Path -LiteralPath $phoneArchive) -and (Get-Item -LiteralPath $phoneArchive).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw 'Phone backups cannot be a junction or symlink' }
+New-Item -ItemType Directory -Force -Path $phoneArchive | Out-Null
+Ensure-ServiceAccess $phoneArchive Modify '*S-1-5-19:(OI)(CI)(M)'
 $old = Get-CimInstance Win32_Service -Filter "Name='HomeImages'"
 $legacyIndex = Join-Path $DataDirectory 'index.sqlite3'
 if ((Test-Path -LiteralPath $legacyIndex) -and (-not $old -or $old.PathName -notmatch 'home-images\.exe')) {
@@ -124,6 +129,11 @@ try {
     if (-not $ready) { throw 'Native service did not become healthy' }
     Get-NetFirewallRule -Name HomeImages-LAN -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -Name HomeImages-LAN -DisplayName 'Home Images (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $config.port -RemoteAddress LocalSubnet -Profile Any | Out-Null
+    # Keep the pinned version in sync with syncthing_install.go. Restrict the
+    # rule to our executable, so existing Syncthing installations are unaffected.
+    Get-NetFirewallRule -Name HomeImages-Syncthing-LAN -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    $managedSyncthing = Join-Path $DataDirectory 'syncthing\bin\v2.1.0\syncthing.exe'
+    New-NetFirewallRule -Name HomeImages-Syncthing-LAN -DisplayName 'Home Images phone backup (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -Program $managedSyncthing -RemoteAddress LocalSubnet -Profile Any | Out-Null
 } catch {
     $failure = $_
     Stop-Service HomeImages -ErrorAction SilentlyContinue

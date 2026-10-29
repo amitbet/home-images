@@ -77,6 +77,10 @@ jobs:
           "HOMEIMAGES_TEST_TURBO_LIBRARY=$((Resolve-Path "dist/package/$codec").Path)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - run: go test -count=1 ./...
       - run: go vet ./...
+      - name: Real Syncthing pairing, backup and process recovery
+        env:
+          HOMEIMAGES_TEST_SYNCTHING_DOWNLOAD: '1'
+        run: go test -run TestSyncthingRealTransferLifecycle -count=1 -timeout=5m ./...
       - name: Native daemon lifecycle smoke test
         shell: pwsh
         run: ./scripts/test-daemon.ps1

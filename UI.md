@@ -222,3 +222,18 @@ sort choices are retained in the page URL.
 
 `GET /api/search` accepts `sort=filename|person|people_count|location|taken_at|created_at|size`
 and `direction=asc|desc` for metadata results (including an empty content query).
+
+## Phone backup
+
+The sidebar's **Phone backup** link opens `/settings`. This page replaces the
+old app setup flow with Syncthing-Fork installation links, a receiver device-ID
+QR and step-by-step Android instructions. Enable the receiver, scan its QR from
+Syncthing-Fork's Devices screen, approve the phone's matching device ID, then
+share and approve its Camera folder. Requests and device status refresh every
+five seconds without clearing a name being typed. Each phone shows connection
+state, transfer progress, archived file count and last backup time.
+
+Home Images manages an isolated Syncthing child process and preserves existing
+Syncthing installations. Disabling the receiver or removing a phone retains
+archived files. See the README's Android phone backup section for storage,
+permissions and deployment details.

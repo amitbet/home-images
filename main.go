@@ -39,6 +39,7 @@ func (p *program) Start(service.Service) error {
 		return err
 	}
 	p.lib = l
+	l.backup.Start()
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel, p.done = cancel, make(chan struct{})
 	p.server = &http.Server{Handler: l.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, MaxHeaderBytes: 32 << 10}
@@ -61,6 +62,7 @@ func (p *program) Stop(service.Service) error {
 		return nil
 	}
 	p.cancel()
+	p.lib.backup.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	err := p.server.Shutdown(ctx)

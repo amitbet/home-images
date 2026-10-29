@@ -45,6 +45,7 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
+	backup   *phoneBackup
 	faceCrop *faceCrop // immutable, set only in an isolated preview worker
 
 	config           Config
@@ -135,6 +136,11 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	l.backup, err = newPhoneBackup(l)
+	if err != nil {
+		l.Close()
+		return nil, err
+	}
 	// Gather bounded planner statistics after schema changes, before the reader
 	// pools prepare their first queries. Maintenance is best effort.
 	l.optimizeDatabases(context.Background())
@@ -153,6 +159,9 @@ func (l *Library) optimizeDatabases(ctx context.Context) {
 	}
 }
 func (l *Library) Close() {
+	if l.backup != nil {
+		l.backup.Close()
+	}
 	if l.ai != nil {
 		l.ai.Close()
 	}

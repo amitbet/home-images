@@ -80,6 +80,11 @@ if ! id "$user" >/dev/null 2>&1; then
  useradd --system --home "$data" --shell /usr/sbin/nologin "$user"
 fi
 sudo -u "$user" test -r "$root" || die "Grant $user read/traverse access to the photo directory first; originals are not modified by this installer."
+# The service writes only its archive subtree; existing originals remain read-only.
+[[ ! -L "$root/Phone backups" ]] || die 'Phone backups cannot be a symlink.'
+mkdir -p "$root/Phone backups"
+chown "$user:$(id -gn "$user")" "$root/Phone backups"
+chmod 750 "$root/Phone backups"
 mkdir -p "$data" "$(dirname "$prefix")"
 chown "$user:$(id -gn "$user")" "$data"
 chmod 750 "$data"

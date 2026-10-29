@@ -51,6 +51,7 @@ func (l *Library) Handler() http.Handler {
 	mux.HandleFunc("/health", wrap(l.health))
 	mux.Handle("/app/", http.StripPrefix("/app/", webHandler))
 	mux.HandleFunc("/favicon.svg", wrap(serveUI))
+	l.backup.routes(mux, wrap)
 	l.ai.routes(mux, wrap)
 	mux.HandleFunc("/api/directories", wrap(l.directories))
 	mux.HandleFunc("GET /api/filter-suggestions", wrap(l.ai.filterSuggestions))
