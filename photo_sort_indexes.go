@@ -21,5 +21,18 @@ func ensurePhotoSortIndexes(db *sql.DB) error {
 			}
 		}
 	}
+	// Scope first, then the default image-grid sort. These covering indexes avoid
+	// sorting or reading every original's compressed metadata on group entry.
+	for _, direction := range []string{"ASC", "DESC"} {
+		for _, scope := range []struct{ name, expr string }{
+			{"directory", "directory"},
+			{"year", "coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE"},
+		} {
+			query := fmt.Sprintf("CREATE INDEX IF NOT EXISTS photo_scope_%s_taken_%s ON images(%s,nullif(taken_at,'') COLLATE NOCASE %s,path COLLATE NOCASE,path,id)", scope.name, direction, scope.expr, direction)
+			if _, err := db.Exec(query); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

@@ -237,3 +237,21 @@ Home Images manages an isolated Syncthing child process and preserves existing
 Syncthing installations. Disabling the receiver or removing a phone retains
 archived files. See the README's Android phone backup section for storage,
 permissions and deployment details.
+
+## Group folders and endless scroll
+
+Choosing a grouping displays cover cards with photo counts. Open a card to browse
+that group's image grid; breadcrumbs return to the parent groups. This applies
+to directory, folder path, year, person and tag grouping. Group summaries paginate
+groups, preserving complete membership counts within the active filters.
+
+Photos, group cards and people append another batch near the bottom of the page.
+Already loaded cards and selections stay in place. Load more is the manual fallback;
+a failed append keeps the current grid and offers a retry. Sorting/filter changes
+cancel outstanding requests and start a fresh grid. Plain content searches retain
+their bounded result limit; metadata views continue through the matching library.
+
+Recent search pages are cached in the tab for 30 seconds (at most 12 pages);
+Refresh and user edits invalidate them. Visible/nearby thumbnail fetches use up
+to four requests, leaving browser connections available for navigation. Actual
+cold decodes remain limited to two server render slots.

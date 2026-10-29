@@ -15,8 +15,10 @@ if (-not $BinaryPath) {
 function Check-Exit([string]$Action) { if ($LASTEXITCODE -ne 0) { throw "$Action failed: exit $LASTEXITCODE" } }
 function Ensure-ServiceAccess([string]$Path, [Security.AccessControl.FileSystemRights]$Rights, [string]$Grant) {
     $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
-    foreach ($rule in (Get-Acl -LiteralPath $Path).Access) {
-        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    # Query SIDs directly: disconnected domain/deleted accounts may not resolve
+    # to names, and must not prevent checking the LocalService grant.
+    foreach ($rule in (Get-Acl -LiteralPath $Path).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        $sid = $rule.IdentityReference.Value
         if ($sid -eq 'S-1-5-19' -and $rule.AccessControlType -eq 'Allow' -and
             ($rule.FileSystemRights -band $Rights) -eq $Rights -and
             ($rule.InheritanceFlags -band $inherit) -eq $inherit -and $rule.PropagationFlags -eq 'None') { return }
