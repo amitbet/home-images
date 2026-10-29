@@ -281,6 +281,49 @@ func availableSyncPort(preferred int) (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// Port probing alone has a gap before the child process binds its listener.
+// Keep an in-process lease for the entire child lifetime so concurrent managed
+// receivers cannot both select the same free port during that gap.
+var managedSyncPorts = struct {
+	sync.Mutex
+	ports map[int]bool
+}{ports: make(map[int]bool)}
+
+func reserveManagedSyncPort(preferred int) (int, func(), error) {
+	managedSyncPorts.Lock()
+	defer managedSyncPorts.Unlock()
+	if preferred < 1024 || preferred > 65535 {
+		preferred = 22001
+	}
+	if managedSyncPorts.ports[preferred] {
+		preferred = 0
+	}
+	for attempts := 0; attempts < 64; attempts++ {
+		listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", preferred))
+		if err != nil {
+			if preferred != 0 {
+				preferred = 0
+				continue
+			}
+			return 0, nil, err
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		listener.Close()
+		if managedSyncPorts.ports[port] {
+			preferred = 0
+			continue
+		}
+		managedSyncPorts.ports[port] = true
+		release := sync.OnceFunc(func() {
+			managedSyncPorts.Lock()
+			delete(managedSyncPorts.ports, port)
+			managedSyncPorts.Unlock()
+		})
+		return port, release, nil
+	}
+	return 0, nil, fmt.Errorf("cannot reserve an independent Syncthing port")
+}
+
 func (b *phoneBackup) serve(ctx context.Context) error {
 	if err := b.prepareArchive(); err != nil {
 		return err
@@ -305,10 +348,11 @@ func (b *phoneBackup) serve(ctx context.Context) error {
 	b.mu.Lock()
 	preferred := b.settings.Port
 	b.mu.Unlock()
-	port, err := availableSyncPort(preferred)
+	port, releasePort, err := reserveManagedSyncPort(preferred)
 	if err != nil {
 		return err
 	}
+	defer releasePort()
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err

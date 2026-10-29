@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -426,5 +427,55 @@ func TestSyncthingRealTransferLifecycle(t *testing.T) {
 	post("remove-phone", map[string]string{"device": peerID})
 	if _, err = os.Stat(filepath.Join(l.rootPath, filepath.FromSlash(archived))); err != nil {
 		t.Fatal("removing phone removed archive", err)
+	}
+}
+
+func TestManagedSyncthingPortsAreReservedBeforeChildrenBind(t *testing.T) {
+	// Hold every lease without starting a process: all ports remain free to the
+	// OS, reproducing the startup window that defeated ordinary port probing.
+	type reservation struct {
+		port    int
+		release func()
+		err     error
+	}
+	results := make(chan reservation, 16)
+	var workers sync.WaitGroup
+	for range cap(results) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			p, release, err := reserveManagedSyncPort(22001)
+			results <- reservation{p, release, err}
+		}()
+	}
+	workers.Wait()
+	close(results)
+	seen := map[int]bool{}
+	var leases []reservation
+	for result := range results {
+		if result.err != nil {
+			t.Error(result.err)
+			continue
+		}
+		defer result.release()
+		if seen[result.port] {
+			t.Errorf("concurrent receivers selected port %d", result.port)
+		}
+		seen[result.port] = true
+		leases = append(leases, result)
+	}
+	if len(leases) == 0 {
+		t.Fatal("no ports reserved")
+	}
+	first := leases[0]
+	first.release()
+	first.release() // cleanup must be idempotent
+	port, release, err := reserveManagedSyncPort(first.port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if port != first.port {
+		t.Fatalf("released port %d was not reusable; got %d", first.port, port)
 	}
 }
