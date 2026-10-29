@@ -1,19 +1,41 @@
 name: CI
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      all_platforms:
+        description: Also build and test Linux and macOS
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
+  # Push and PR runs build Windows only. Linux and macOS run on manual
+  # dispatch with all_platforms, and always for release tags.
+  matrix:
+    runs-on: ubuntu-22.04
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          ALL_PLATFORMS: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.all_platforms) }}
+        run: |
+          windows='{"runner":"windows-2025","os":"windows","arch":"amd64"},{"runner":"windows-11-arm","os":"windows","arch":"arm64"}'
+          others='{"runner":"ubuntu-22.04","os":"linux","arch":"amd64"},{"runner":"ubuntu-22.04-arm","os":"linux","arch":"arm64"},{"runner":"macos-15-intel","os":"darwin","arch":"amd64"},{"runner":"macos-15","os":"darwin","arch":"arm64"}'
+          if [ "$ALL_PLATFORMS" = true ]; then
+            echo "include=[$others,$windows]" >> "$GITHUB_OUTPUT"
+          else
+            echo "include=[$windows]" >> "$GITHUB_OUTPUT"
+          fi
   native:
+    needs: matrix
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {runner: ubuntu-22.04, os: linux, arch: amd64}
-          - {runner: ubuntu-22.04-arm, os: linux, arch: arm64}
-          - {runner: macos-15-intel, os: darwin, arch: amd64}
-          - {runner: macos-15, os: darwin, arch: arm64}
-          - {runner: windows-2025, os: windows, arch: amd64}
-          - {runner: windows-11-arm, os: windows, arch: arm64}
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
     runs-on: ${{ matrix.runner }}
     env:
       CGO_ENABLED: '0'
