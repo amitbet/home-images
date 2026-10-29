@@ -16,7 +16,7 @@ import (
 
 func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	a.curationRoutes(mux, wrap)
-	mux.HandleFunc("/api/people/{person}/merge-preview", wrap(a.mergePreview))
+	mux.HandleFunc("/api/people/{person}/merge-preview", a.mutation(a.mergePreview))
 	mux.HandleFunc("/api/indexing", wrap(a.indexStatus))
 	mux.HandleFunc("/api/people/{person}/merge-many", a.mutation(a.mergeMany))
 	mux.HandleFunc("/api/search", wrap(a.search))
@@ -59,12 +59,13 @@ func (a *AI) mutation(fn endpoint) http.HandlerFunc {
 				return
 			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		// Room for maxMergeGroups IDs in merge requests.
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		// Invalidate snapshots on API edits even if the client disconnects after
 		// a committed write. This revision is independent of pooled connections.
-		if r.URL.Path != "/api/curation" {
+		if r.URL.Path != "/api/curation" && !strings.HasSuffix(r.URL.Path, "/merge-preview") {
 			defer a.selectionRevision.Add(1)
-		} // This batch endpoint only reads annotations.
+		} // These POST endpoints only read.
 		if err := fn(w, r); err != nil {
 			status, msg := 500, "Request failed"
 			var e *apiError
@@ -645,8 +646,8 @@ func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
 		Sources []int64 `json:"sources"`
 	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > 500 {
-		return bad(400, "Select between 1 and 500 groups")
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 || len(body.Sources) > maxMergeGroups {
+		return bad(400, fmt.Sprintf("Select between 1 and %d groups", maxMergeGroups))
 	}
 	seen := map[int64]bool{}
 	for _, source := range body.Sources {

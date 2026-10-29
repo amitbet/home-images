@@ -829,10 +829,10 @@ function updateMergeImageCount(){
  mergeCountTimer=setTimeout(async()=>{
   const controller=new AbortController();mergeCountController=controller;
   try{
-   const result=await api(`/api/people/${state.editing.id}/merge-preview?sources=${[...mergeSelection.keys()].join(",")}`,undefined,controller.signal);
+   const result=await api(`/api/people/${state.editing.id}/merge-preview`,{sources:[...mergeSelection.keys()]},controller.signal);
    if(key!==mergeCountKey)return;
    mergeSelectedImages=result.images;renderMergeImageCount();
-  }catch(e){if(e.name!=="AbortError"&&key===mergeCountKey){$("editError").textContent="Could not count selected images. Change the selection to retry.";}}
+  }catch(e){if(e.name!=="AbortError"&&key===mergeCountKey){$("editError").textContent=`Could not count selected images: ${e.message}. Change the selection to retry.`;}}
  },150);
 }
 let suggestedGroups = [];
@@ -852,7 +852,7 @@ function updateMergeSelection() {
   $("selectAllSuggestions").disabled = !suggestedGroups.length;
   $("selectAllSuggestions").textContent = suggestedGroups.length && suggestedGroups.every(p => mergeSelection.has(p.id)) ? "Clear displayed selections" : "Select all displayed";
   updateMergeImageCount();
-  $("mergePerson").disabled = !mergeSelection.size || mergeSelection.size > 500;
+  $("mergePerson").disabled = !mergeSelection.size || mergeSelection.size > 5000;
   $("refreshSuggestions").disabled=!!mergeSelection.size;
   for (const input of document.querySelectorAll("input[data-merge-group]")) {
     input.checked = mergeSelection.has(Number(input.dataset.mergeGroup));
@@ -2156,7 +2156,7 @@ function appendSuggestionPage() {
 }
 function updateSuggestionProgress(){
   $("moreSuggestions").hidden=suggestionShown>=suggestionPool.length;
-  $("suggestionProgress").textContent=`Showing ${suggestionShown} ranked groups. Select matches, then show more until the choices no longer look right. Up to 500 groups per merge.`;
+  $("suggestionProgress").textContent=`Showing ${suggestionShown} ranked groups. Select matches, then show more until the choices no longer look right. Up to 5,000 groups per merge.`;
 }
 $("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
 $("moreSuggestions").onclick=appendSuggestionPage;

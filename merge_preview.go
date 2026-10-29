@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 )
+
+// Bounded by request work and SQLite's 32,766 bound-parameter limit.
+const maxMergeGroups = 5000
 
 // Count unique visible photos, rather than summing overlapping group counts.
 func (a *AI) mergePreview(w http.ResponseWriter, r *http.Request) error {
@@ -12,15 +16,20 @@ func (a *AI) mergePreview(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(r.URL.Query().Get("sources"), ",")
-	if len(parts) > 500 {
-		return bad(400, "Select at most 500 groups")
+	// Sources travel in the body: thousands of IDs would exceed the header limit.
+	var body struct {
+		Sources []int64 `json:"sources"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Sources) < 1 {
+		return bad(400, "Choose source groups")
+	}
+	if len(body.Sources) > maxMergeGroups {
+		return bad(400, fmt.Sprintf("Select at most %d groups", maxMergeGroups))
 	}
 	ids := []any{}
 	seen := map[int64]bool{}
-	for _, part := range parts {
-		id, e := strconv.ParseInt(part, 10, 64)
-		if e != nil || id < 1 || id == target || seen[id] {
+	for _, id := range body.Sources {
+		if id < 1 || id == target || seen[id] {
 			return bad(400, "Choose distinct source groups")
 		}
 		seen[id] = true
@@ -37,5 +46,5 @@ func (a *AI) mergePreview(w http.ResponseWriter, r *http.Request) error {
 	if err = a.read.QueryRowContext(r.Context(), query, ids...).Scan(&count); err != nil {
 		return err
 	}
-	return writeJSON(w, 200, map[string]any{"groups": len(parts), "images": count})
+	return writeJSON(w, 200, map[string]any{"groups": len(body.Sources), "images": count})
 }
