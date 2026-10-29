@@ -2102,6 +2102,31 @@ toggleSaved.onclick = () => {
   toggleSaved.setAttribute("aria-expanded", String(open));
 };
 document.querySelector("nav").append(toggleSaved);
+const themeQuery = matchMedia("(prefers-color-scheme: dark)");
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content =
+    theme === "dark" ? "#101115" : "#f6f6f8";
+  const label = `Switch to ${theme === "dark" ? "light" : "dark"} theme`;
+  $("themeToggle").setAttribute("aria-label", label);
+  $("themeToggle").title = label;
+}
+applyTheme(document.documentElement.dataset.theme);
+$("themeToggle").onclick = () => {
+  const next =
+    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem("homeImages.theme", next);
+  } catch {}
+  applyTheme(next);
+};
+themeQuery.addEventListener("change", (event) => {
+  let stored = null;
+  try {
+    stored = localStorage.getItem("homeImages.theme");
+  } catch {}
+  if (!stored) applyTheme(event.matches ? "dark" : "light");
+});
 let idleTimer, wakeLock;
 function showPlayerControls() {
   const viewer = $("viewer");
