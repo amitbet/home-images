@@ -58,6 +58,7 @@ func (l *Library) Handler() http.Handler {
 	mux.HandleFunc("/api/images", wrap(l.images))
 	mux.HandleFunc("/api/next", wrap(l.next))
 	mux.HandleFunc("/api/images/{id}", wrap(l.imageMetadata))
+	mux.HandleFunc("/api/images/{id}/identity", wrap(l.imageIdentity))
 	mux.HandleFunc("/api/images/{id}/image", wrap(l.render))
 	mux.HandleFunc("/api/images/{id}/thumbnail", wrap(l.thumbnail))
 	mux.HandleFunc("/api/images/{id}/original", wrap(l.original))

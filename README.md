@@ -182,7 +182,44 @@ filters start from the person's face index and validate model/signature matches
 through covering indexes. Bounded SQLite planner maintenance runs after schema
 setup, after the initial scan, and daily; it does not require a manual `ANALYZE`.
 It is disposable: stop the daemon before removing it to force a complete rebuild.
-Moving a photo changes its ID. Logs rotate at 10 MiB with one retained previous file.
+Moving a photo changes its existing path-based ID. The additive content-identity
+index below links matching originals across paths without replacing those IDs.
+Logs rotate at 10 MiB with one retained previous file.
+
+### Content identity and duplicate candidates
+
+Existing image IDs, URLs, albums, annotations, face associations, AI results and
+thumbnail caches remain intact. Startup adds nullable `content_id` and `file_hash`
+columns and indexes without rewriting catalog metadata or AI signatures. A single
+background worker hashes up to 16 files per batch, pauses for foreground rendering,
+yields within large files and persists each result. Restarting resumes pending
+work. Temporary read failures retry after an hour; a changed scan signature clears
+stale hashes automatically. Backfilling does not require a full rescan or repeat AI
+inference. It reads existing originals, so disk activity will increase temporarily.
+
+- `file_hash`: `sha256:<full 64-character hex digest>` of every original byte.
+- `content_id`: `imgdata-sha256-v1:<format>:<full hex digest>` for JPEG, PNG and
+  WebP. Format-aware parsing excludes EXIF, XMP, IPTC, comments and color-profile
+  metadata while retaining encoded image data, transparency and animation data.
+  Recompression can produce a different content ID. Preview and AI invalidation
+  continue to use the existing source signature, including for orientation and
+  color-profile edits.
+- Other formats, including HEIC/HEIF, TIFF, GIF and BMP, initially use
+  `file-sha256-v1:<full hex digest>` for exact-file matching. **Metadata-independent
+  matching is not yet supported for these formats.** Malformed JPEG/PNG/WebP files
+  retain their file checksum with a null content ID and a recorded parsing error.
+
+Phone imports compute both hashes while streaming the staging file into the
+archive. The catalog reuses these saved hashes when its source signature matches,
+avoiding another read. Every metadata version is retained, and deleting a staging
+copy does not remove its archived original.
+
+`GET /api/images/ID/identity` returns `image_id`, nullable `content_id` and
+`file_hash`, `pending`, nullable `error`, and up to 100 `potential_duplicates`
+(`id`, `path`). Matching content IDs link candidates only: no automatic merging,
+file deletion, ID changes or cross-image reuse of face results occurs. Hidden
+photos are excluded unless `hidden=all` or `hidden=only` is requested. This first
+migration deliberately keeps each existing catalog record independent.
 
 ## Windows service
 

@@ -41,3 +41,10 @@ or upgrades an existing Syncthing installation.
 
 See [Android phone backup in the README](README.md#android-phone-backup) for
 storage paths, supported platforms, network details and integration tests.
+
+During archive import, Home Images computes the original-file SHA-256 and a
+versioned content identity in the same copy pass. JPEG, PNG and WebP content
+identities exclude metadata, so updated EXIF can link potential duplicates while
+both original versions remain archived. Other formats currently match exact file
+bytes only. The background identity backfill preserves existing gallery IDs and
+face indexing; see [content identity](README.md#content-identity-and-duplicate-candidates).

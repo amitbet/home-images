@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
+	if err = ensureImageIdentitySchema(db); err != nil {
+		l.Close()
+		return nil, err
+	}
 	if err = ensurePhotoSortIndexes(db); err != nil {
 		l.Close()
 		return nil, err
@@ -120,7 +124,7 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	if previous != "" && previous != rootPath {
-		if _, err = db.Exec("DELETE FROM images; DELETE FROM locations"); err != nil {
+		if _, err = db.Exec("DELETE FROM images; DELETE FROM locations; DELETE FROM phone_backup_hashes"); err != nil {
 			l.Close()
 			return nil, err
 		}
@@ -227,6 +231,9 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	identityDone := make(chan struct{})
+	go func() { defer close(identityDone); l.backfillImageIdentities(ctx) }()
+	defer func() { <-identityDone }()
 	summariesDone := make(chan struct{})
 	go func() { defer close(summariesDone); l.ai.warmPeopleSummaries(ctx) }()
 	defer func() { <-summariesDone }()

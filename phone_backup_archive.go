@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -203,8 +202,16 @@ func (b *phoneBackup) importFolder(ctx context.Context, phone backupPhone, folde
 			return err
 		}
 		defer archive.Remove(temp)
-		hash := sha256.New()
-		n, copyErr := io.Copy(io.MultiWriter(out, hash), &backupContextReader{ctx: ctx, r: f})
+		hashes, n, copyErr := hashOriginal(ctx, f, path, out)
+		hashError := ""
+		if copyErr != nil {
+			hashError = copyErr.Error()
+		}
+		// A metadata parser failure must not prevent archiving a completed file.
+		// The checksum is still valid if the entire copy completed.
+		if copyErr != nil && hashes.FileHash != "" {
+			copyErr = nil
+		}
 		if copyErr == nil {
 			copyErr = out.Sync()
 		}
@@ -233,7 +240,7 @@ func (b *phoneBackup) importFolder(ctx context.Context, phone backupPhone, folde
 		if len(runes) > 60 {
 			stem = string(runes[:60])
 		}
-		name := stem + "--" + fmt.Sprintf("%x", hash.Sum(nil)) + filepath.Ext(d.Name())
+		name := stem + "--" + strings.TrimPrefix(hashes.FileHash, "sha256:") + filepath.Ext(d.Name())
 		destination := filepath.Join(dir, name)
 		if err = archive.Chtimes(temp, time.Now(), before.ModTime()); err != nil {
 			return err
@@ -254,9 +261,13 @@ func (b *phoneBackup) importFolder(ctx context.Context, phone backupPhone, folde
 			if copyErr != nil {
 				return copyErr
 			}
-			if !bytes.Equal(existingHash.Sum(nil), hash.Sum(nil)) {
+			if fmt.Sprintf("sha256:%x", existingHash.Sum(nil)) != hashes.FileHash {
 				return fmt.Errorf("archive integrity check failed for %s; existing file was preserved", destination)
 			}
+		}
+		archivePath := filepath.ToSlash(filepath.Join("Phone backups", destination))
+		if _, err = b.lib.db.ExecContext(ctx, `INSERT INTO phone_backup_hashes(path,signature,content_id,file_hash,hash_error) VALUES(?,?,nullif(?,''),?,nullif(?,'')) ON CONFLICT(path) DO UPDATE SET signature=excluded.signature,content_id=excluded.content_id,file_hash=excluded.file_hash,hash_error=excluded.hash_error`, archivePath, fmt.Sprintf("go1:%d:%d", before.Size(), before.ModTime().UnixNano()), hashes.ContentID, hashes.FileHash, hashError); err != nil {
+			return err
 		}
 		_, err = b.lib.db.ExecContext(ctx, `INSERT INTO phone_backup_files(source,signature,archive,imported_at) VALUES(?,?,?,?) ON CONFLICT(source) DO UPDATE SET signature=excluded.signature,archive=excluded.archive,imported_at=excluded.imported_at`, key, signature, filepath.ToSlash(filepath.Join("Phone backups", destination)), time.Now().UTC().Format(time.RFC3339))
 		if err == nil {
