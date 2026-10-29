@@ -11,16 +11,17 @@ import (
 )
 
 type Config struct {
-	JPEGDecoder  string   `json:"jpeg_decoder,omitempty"`
-	Root         string   `json:"root"`
-	DataDir      string   `json:"data_dir"`
-	Host         string   `json:"host"`
-	Port         int      `json:"port"`
-	ScanInterval int      `json:"scan_interval_seconds"`
-	CORSOrigins  []string `json:"cors_origins"`
-	FFmpeg       string   `json:"ffmpeg,omitempty"`
-	MaxPixels    int64    `json:"max_pixels"`
-	ML           MLConfig `json:"ml"`
+	SFTP         SFTPConfig `json:"sftp"`
+	JPEGDecoder  string     `json:"jpeg_decoder,omitempty"`
+	Root         string     `json:"root"`
+	DataDir      string     `json:"data_dir"`
+	Host         string     `json:"host"`
+	Port         int        `json:"port"`
+	ScanInterval int        `json:"scan_interval_seconds"`
+	CORSOrigins  []string   `json:"cors_origins"`
+	FFmpeg       string     `json:"ffmpeg,omitempty"`
+	MaxPixels    int64      `json:"max_pixels"`
+	ML           MLConfig   `json:"ml"`
 }
 
 type MLConfig struct {
@@ -79,6 +80,9 @@ func loadConfig(path string) (Config, error) {
 		return c, fmt.Errorf("jpeg_decoder must be auto or go")
 	}
 	c.ML.defaults()
+	if err := c.SFTP.validate(); err != nil {
+		return c, err
+	}
 	if c.ML.URL != "" {
 		u, e := url.Parse(c.ML.URL)
 		if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

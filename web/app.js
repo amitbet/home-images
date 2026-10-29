@@ -27,7 +27,12 @@ const state = {
   savedName: "",
   semantic: false,
   grouped: false,
+  groupScope: null,
+  navigation: [],
   dirty: false,
+  loadingGrid: false,
+  loadingMore: false,
+  moreFailed: false,
 };
 const number = (n) => Number(n || 0).toLocaleString();
 const text = (tag, value = "", className = "") => {
@@ -70,7 +75,7 @@ function requestThumbnail(img) {
   pumpThumbnails();
 }
 function pumpThumbnails() {
-  while (thumbnailActive < 2 && thumbnailQueue.length) {
+  while (thumbnailActive < 4 && thumbnailQueue.length) {
     const job = thumbnailQueue.shift();
     if (!job.img.isConnected || job.generation !== state.generation) continue;
     const cached = clientThumbnails.get(job.url);
@@ -132,6 +137,7 @@ function date(photo) {
   return raw ? raw.slice(0, 10).replace(/:/g, "-") : "";
 }
 async function api(path, body, signal) {
+  if (body !== undefined && path !== "/api/curation" && !path.startsWith("/api/faces?" ) && path !== "/api/faces") gridPages.clear();
   const response = await fetch(
     path,
     body === undefined
@@ -183,7 +189,8 @@ function params() {
   });
   for (const [key, id] of Object.entries(fields))
     if ($(id).value.trim()) p.set(key, $(id).value.trim());
-  if ($("photoGroup").value) p.set("group_by", $("photoGroup").value);
+  if ($("photoGroup").value) { p.set("group_by", $("photoGroup").value); p.set("group_view", "folders"); }
+  if (state.groupScope) { p.set("group_kind", state.groupScope.kind); p.set("group_key", state.groupScope.key); p.set("group_label", state.groupScope.label); }
   p.set("sort", $("photoSort").value);
   p.set("direction", $("sortDirection").value);
   p.set("layout", state.layout);
@@ -206,11 +213,14 @@ function resetInputs() {
   state.person = null;
   state.album = null;
   state.savedName = "";
+  state.groupScope = null;
 }
 function restoreQuery(query) {
   resetInputs();
   const p =
     query instanceof URLSearchParams ? query : new URLSearchParams(query);
+  $("photoSort").value = "taken_at";
+  if (p.has("group_kind")) state.groupScope = {kind:p.get("group_kind"),key:p.get("group_key") || "",label:p.get("group_label") || p.get("group_key") || "Root folder"};
   if ([...$("photoSort").options].some(o => o.value === p.get("sort"))) $("photoSort").value = p.get("sort");
   $("sortDirection").value = p.get("direction") === "desc" ? "desc" : "asc";
   $("photoGroup").value = [...$("photoGroup").options].some(o => o.value === p.get("group_by")) ? p.get("group_by") : "";
@@ -223,6 +233,7 @@ function restoreQuery(query) {
   if (p.get("album"))
     state.album = { id: Number(p.get("album")), name: "Album" };
   state.view =
+    ["people","albums"].includes(p.get("view")) ? p.get("view") :
     p.get("favorite") === "true"
       ? "favorites"
       : p.get("hidden") === "only"
@@ -246,7 +257,7 @@ function viewChrome() {
     else e.removeAttribute("aria-current");
   });
   $("resultsTitle").textContent =
-    state.savedName || state.album?.name || viewTitles[state.view] || viewTitles.photos;
+    state.groupScope?.label || state.savedName || state.album?.name || viewTitles[state.view] || viewTitles.photos;
   $("query").placeholder =
     state.view === "people"
       ? "Search people"
@@ -264,10 +275,12 @@ function viewChrome() {
     $("sortDirection").disabled = false;
     $("sortDirection").title = "Group order; photos stay ranked by visual similarity";
   }
-  $("gallery").classList.toggle("list-view", state.layout === "list");
+  $("gallery").classList.toggle("list-view", state.layout === "list" && !$("photoGroup").value);
   $("listToggle").textContent = state.layout === "list" ? "Grid view" : "List view";
+  $("listToggle").hidden = !!$("photoGroup").value;
+  $("toggleGridFaces").hidden = !!$("photoGroup").value;
   $("listToggle").setAttribute("aria-pressed", String(state.layout === "list"));
-  $("slideshow").hidden = !photoViews();
+  $("slideshow").hidden = !photoViews() || !!$("photoGroup").value;
   $("filtersToggle").hidden = !photoViews();
   $("newAlbum").hidden = state.view !== "albums";
   if ($("playbackLinks")) $("playbackLinks").hidden = !photoViews();
@@ -279,9 +292,45 @@ function viewChrome() {
   $("gallery").hidden = !photoViews();
   $("people").hidden = state.view !== "people";
   $("albums").hidden = state.view !== "albums";
+  renderBreadcrumbs();
   personChip();
   $("hideSelected").textContent =
     state.view === "hidden" ? "Restore to frame" : "Hide from frame";
+}
+function renderBreadcrumbs() {
+  const query=params();query.set("view",state.view);
+  for(const key of ["offset","layout","sort","direction"])query.delete(key);
+  const key=query.toString(),label=state.groupScope?.label || state.person?.name || state.album?.name || ($("photoGroup").value === "directory" ? "Directories" : $("photoGroup").value ? $("photoGroup").selectedOptions[0].textContent : $("query").value.trim() ? "Search: "+$("query").value.trim() : viewTitles[state.view]) || "Photos";
+  if (!state.navigation.length && state.groupScope) {
+    const parent = new URLSearchParams(query);
+    for (const field of ["group_kind", "group_key", "group_label"]) parent.delete(field);
+    parent.set("group_by", state.groupScope.kind);
+    parent.set("group_view", "folders");
+    const option = [...$("photoGroup").options].find(o => o.value === state.groupScope.kind);
+    state.navigation.push({key: parent.toString(), label: option?.textContent || "Groups"});
+  }
+  if(!state.navigation.length || state.navigation.at(-1).key!==key)state.navigation.push({key,label});
+  const nav=$("breadcrumbs");nav.replaceChildren();
+  const home=text("button","All photos");home.onclick=()=>{state.navigation=[];restoreQuery("");state.offset=0;load();window.scrollTo(0,0);};nav.append(home);
+  state.navigation.forEach((entry,index)=>{
+    if(index===0 && entry.label==="All photos" && !new URLSearchParams(entry.key).get("group_kind"))return;
+    nav.append(text("span"," / "));const b=text("button",entry.label);
+    b.onclick=()=>{state.navigation=state.navigation.slice(0,index+1);restoreQuery(entry.key);state.offset=0;load();window.scrollTo(0,0);};nav.append(b);
+  });
+}
+async function enterPhotoGroup(kind,key,label,photoID) {
+  state.groupScope={kind,key,label};$("photoGroup").value="";state.offset=0;state.layout="grid";
+  const opening = load();
+  window.scrollTo(0, 0);
+  if(await opening) {if(photoID){const i=state.items.findIndex(p=>p.id===photoID);if(i>=0)await openImage(i);else await openImage(0,await api("/api/images/"+photoID));}}
+}
+function renderPhotoGroupFolders(result, append = false) {
+  const gallery=$("gallery");if (!append) gallery.replaceChildren();
+  for(const group of result.items){
+    const card=text("button","","directory-card"),img=new Image();img.alt="";previewImage(img,"/api/images/"+group.cover+"/thumbnail");
+    card.append(img,text("strong",group.label || group.key || "Root folder"),text("span",number(group.count)+" photos"));
+    card.onclick=()=>enterPhotoGroup(result.group_by || "directory",group.key,group.label || group.key || "Root folder");gallery.append(card);
+  }
 }
 function personChip() {
   $("clearPerson").hidden = !state.person || !photoViews();
@@ -298,20 +347,80 @@ function setView(view) {
   viewChrome();
   load();
 }
-function pagination() {
-  const limit = state.view === "people" ? 48 : 60;
-  const cap = state.semantic && !state.grouped ? Math.min(state.total, 1200) : state.total;
-  $("previous").hidden = state.offset === 0 || state.view === "albums";
-  $("next").hidden =
-    state.view === "albums" ||
-    state.offset + state.items.length >= cap ||
-    !state.items.length ||
-    (state.semantic && !state.grouped && state.offset + limit > 1000);
-  $("pageLabel").textContent =
-    state.view !== "albums" && state.total
-      ? `${number(state.offset + 1)}–${number(state.offset + state.items.length)} of ${number(state.total)}`
-      : "";
+function gridCap() {
+  return state.semantic && !state.grouped ? Math.min(state.total, 1000) : state.total;
 }
+function hasMoreGrid() {
+  return state.view !== "albums" && state.items.length > 0 && state.offset + state.items.length < gridCap();
+}
+function pagination() {
+  $("previous").hidden = state.offset === 0 || state.view === "albums";
+  $("next").hidden = !hasMoreGrid();
+  $("next").disabled = state.loadingMore;
+  $("next").textContent = state.loadingMore ? "Loading..." : state.moreFailed ? "Retry loading more" : "Load more";
+  $("pageLabel").textContent = state.view !== "albums" && state.total
+    ? `${number(state.offset + 1)}-${number(state.offset + state.items.length)} of ${number(gridCap())}` : "";
+}
+async function loadMoreGrid() {
+  if (state.loadingGrid || state.loadingMore || !hasMoreGrid()) return;
+  const gen = state.generation;
+  const signal = searchController?.signal;
+  state.loadingMore = true;
+  state.moreFailed = false;
+  pagination();
+  try {
+    const offset = state.offset + state.items.length;
+    const p = params();
+    p.set("offset", offset);
+    p.set("limit", state.view === "people" ? 48 : Math.min(60, gridCap() - offset));
+    let result;
+    if (state.view === "people") {
+      result = await api("/api/people?" + new URLSearchParams({q: $("query").value.trim(), limit: 48, offset, summary: true}), undefined, signal);
+    } else result = await gridPage(p, signal);
+    if (gen !== state.generation) return;
+    const start = state.items.length;
+    let annotations;
+    if (state.view !== "people" && !result.directory_groups && !result.photo_groups) {
+      annotations = await api("/api/curation", {ids: result.items.map(p => p.id)}, signal);
+      if (gen !== state.generation) return;
+    }
+    state.total = result.total;
+    state.items.push(...result.items);
+    if (state.view === "people") {
+      state.people = state.items;
+      renderPeople(start);
+    } else if (result.directory_groups || result.photo_groups) {
+      renderPhotoGroupFolders(result, true);
+    } else {
+      Object.assign(state.annotations, annotations);
+      renderPhotos(start);
+      void loadThumbnailFaces(gen, result.items);
+    }
+    if (!result.items.length) state.total = offset;
+  } catch (error) {
+    if (gen === state.generation && error.name !== "AbortError") {
+      state.moreFailed = true;
+      notice("Could not load more. " + error.message, true);
+    }
+  } finally {
+    if (gen === state.generation) {
+      state.loadingMore = false;
+      pagination();
+    }
+  }
+}
+const gridPages = new Map();
+async function gridPage(p, signal) {
+  const key = p.toString();
+  const cached = gridPages.get(key);
+  if (cached && Date.now() - cached.created < 30000) return cached.result;
+  const result = await api("/api/search?" + p, undefined, signal);
+  gridPages.delete(key);
+  gridPages.set(key, {result, created: Date.now()});
+  while (gridPages.size > 12) gridPages.delete(gridPages.keys().next().value);
+  return result;
+}
+
 function filterChips() {
   const box = $("activeFilters");
   box.replaceChildren();
@@ -358,6 +467,10 @@ async function load(forcePeopleRefresh = false) {
   searchController = typeof AbortController === "function" ? new AbortController() : null;
   const signal = searchController?.signal;
   const gen = ++state.generation;
+  state.loadingGrid = true;
+  state.loadingMore = false;
+  state.moreFailed = false;
+  state.faceMap = {};
   resetThumbnailRequests();
   for (const id of ["gallery", "people", "albums"]) $(id).replaceChildren();
   state.items = [];
@@ -394,7 +507,7 @@ async function load(forcePeopleRefresh = false) {
       );
       if (gen !== state.generation) return;
       state.people = result.items;
-      state.items = result.items;
+      state.items = [...result.items];
       state.total = result.total;
       state.semantic = false;
       state.grouped = false;
@@ -409,15 +522,16 @@ async function load(forcePeopleRefresh = false) {
       const p = params();
       p.set("limit", "60");
       p.set("offset", state.offset);
-      const result = await api("/api/search?" + p, undefined, signal);
+      const result = await gridPage(p, signal);
       if (gen !== state.generation) return;
       state.bag = [];
       state.shuffleStarted = false;
+      if(result.directory_groups || result.photo_groups){state.items=[...result.items];state.total=result.total;state.semantic=false;state.grouped=false;renderPhotoGroupFolders(result);$("resultsCount").textContent=number(result.total)+(result.group_by === "directory" || result.directory_groups ? " directories" : " groups");if(!result.items.length)empty("No groups found", "Try changing your filters.");pagination();return true;}
       const annotations = await api("/api/curation", {
         ids: result.items.map((p) => p.id),
       });
       if (gen !== state.generation) return;
-      state.items = result.items;
+      state.items = [...result.items];
       state.total = result.total;
       state.semantic = result.semantic;
       state.grouped = !!result.group_by;
@@ -460,20 +574,21 @@ async function load(forcePeopleRefresh = false) {
     return false;
   } finally {
     if (gen === state.generation) {
+      state.loadingGrid = false;
       $("gallery").classList.remove("loading");
       $("people").classList.remove("loading");
       $("gallery").setAttribute("aria-busy", "false");
     }
   }
 }
-function renderPhotos() {
+function renderPhotos(start = 0) {
   const gallery = $("gallery");
-  thumbnailObserver?.disconnect();
-  gallery.replaceChildren();
-  let lastGroup = null;
+  if (!start) { thumbnailObserver?.disconnect(); gallery.replaceChildren(); }
+  let lastGroup = start ? state.items[start - 1]?.group_key : null;
   for (const [i, photo] of state.items.entries()) {
+    if (i < start) continue;
     if (photo.group_key !== undefined && photo.group_key !== lastGroup) {
-      gallery.append(text("h2", photo.group_label, "photo-group-heading"));
+      const heading=text("button",photo.group_label,"photo-group-heading");heading.onclick=()=>enterPhotoGroup($("photoGroup").value,photo.group_key,photo.group_label);gallery.append(heading);
       lastGroup = photo.group_key;
     }
     const a = state.annotations[photo.id] || {};
@@ -498,6 +613,7 @@ function renderPhotos() {
     open.onclick = (e) => {
       if (!normalClick(e)) return;
       e?.preventDefault();
+      if(state.grouped)return enterPhotoGroup($("photoGroup").value,photo.group_key,photo.group_label,photo.id);
       return openImage(i);
     };
     const heart = text("button", a.favorite ? "♥" : "♡", "photo-heart");
@@ -535,11 +651,10 @@ function renderPhotos() {
     gallery.append(card);
   }
 }
-function renderPeople() {
+function renderPeople(start = 0) {
   const grid = $("people");
-  thumbnailObserver?.disconnect();
-  grid.replaceChildren();
-  for (const p of state.people) {
+  if (!start) { thumbnailObserver?.disconnect(); grid.replaceChildren(); }
+  for (const p of state.people.slice(start)) {
     const card = text("article", "", "person-card");
     card.dataset.person = p.id;
     const open = text("a", "", "person-open");
@@ -1191,7 +1306,12 @@ function renderPhotoAlbums(a) {
     $("photoAlbums").append(b);
   }
 }
-const viewerURL = (photo, large = false) => photo.image_url + (large || window.innerWidth > 1600 ? "?width=1920&height=1440" : "?width=1280&height=1280&quality=80");
+const viewerURL = (photo, large = false) => {
+  const stage=document.querySelector(".viewer-stage"),img=$("fullImage"),factor=large ? Math.min(devicePixelRatio || 1,2)*viewerZoom : 1;
+  const width=Math.min(2560,Math.max(320,Math.ceil((img.clientWidth || (stage?.clientWidth || innerWidth)-100)*factor/160)*160));
+  const height=Math.min(2560,Math.max(320,Math.ceil((img.clientHeight || stage?.clientHeight || innerHeight*.7)*factor/160)*160));
+  return photo.image_url+`?width=${width}&height=${height}&quality=80`;
+};
 let viewerFetch = null;
 let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null;
 function setViewerZoom(value) {
@@ -1233,14 +1353,21 @@ function fetchViewerImage(image, url) {
     if (!controller.signal.aborted) image.src=cacheThumbnail(url,blob).src;
   }).catch(e=>{if(e.name!=="AbortError")image.onerror?.();});
 }
+let resolutionTimer;
 function upgradeViewerResolution() {
-  const photo=currentPhoto();if(!photo || !$("viewer").open || $("fullImage").dataset.highResolution===photo.id)return;
-  $("fullImage").dataset.highResolution=photo.id;
-  const generation=state.viewerGeneration, image=new Image();
-  image.onload=()=>{if(generation===state.viewerGeneration){$("fullImage").src=image.src;$("fullImage").classList.remove("loading");}};
-  image.onerror=()=>{if(generation===state.viewerGeneration)delete $("fullImage").dataset.highResolution;};
-  fetchViewerImage(image,viewerURL(photo,true));
+  clearTimeout(resolutionTimer);resolutionTimer=setTimeout(()=>{
+    const photo=currentPhoto();if(!photo || !$("viewer").open)return;
+    const url=viewerURL(photo,true),display=$("fullImage");if(display.dataset.resolution===url)return;
+    const generation=state.viewerGeneration,image=new Image();
+    image.onload=()=>{if(generation===state.viewerGeneration){display.src=image.src;display.dataset.resolution=url;display.classList.remove("loading");}};
+    fetchViewerImage(image,url);
+  },160);
 }
+document.querySelector(".viewer-stage").addEventListener("wheel",e=>{
+  if(!$("viewer").open)return;e.preventDefault();stopPlay();
+  setViewerZoom(viewerZoom*Math.exp(-e.deltaY*(e.deltaMode===1?.04:.002)));
+  if(viewerZoom>1)upgradeViewerResolution();
+},{passive:false});
 let viewerRequest = null, nextPreview = null, playbackPrefetch = null;
 function playbackQuery(previous) {
   const p = params();
@@ -1249,6 +1376,7 @@ function playbackQuery(previous) {
   return "/api/playback/next?" + p;
 }
 function clearViewerPreview() {
+  clearTimeout(resolutionTimer);
   viewerFetch?.abort();viewerFetch=null;
   for (const image of [viewerRequest, nextPreview]) {
     if (image) { image.onload = image.onerror = null; image.removeAttribute("src"); }
@@ -1290,12 +1418,16 @@ function showViewerPreview(photo, gen, external) {
   display.onerror = () => {
     if (gen === state.viewerGeneration) display.style.visibility = "hidden";
   };
-  display.src = "/api/images/" + photo.id + "/thumbnail";
+  const thumbURL="/api/images/"+photo.id+"/thumbnail";
+  display.src=clientThumbnails.get(thumbURL)?.src || thumbURL;
+  sizeViewerImage(photo);
   const full = preloaded || new Image();
   viewerRequest = full;
   full.fetchPriority = "high";
   full.onload = () => {
     if (gen !== state.viewerGeneration) return;
+    if(viewerZoom>1)return;
+    display.dataset.resolution=viewerURL(photo);
     display.src = full.src;
     display.classList.remove("loading");
     preloadNext(photo, gen, external);
@@ -1315,10 +1447,12 @@ async function openImage(i, external = null) {
   const gen = ++state.viewerGeneration;
   const photo = currentPhoto();
   setViewerZoom(1);
-  delete $("fullImage").dataset.highResolution;
+  delete $("fullImage").dataset.resolution;
   const a = state.annotations[photo.id] || {};
   $("fullImage").alt = a.title || photo.filename;
+  modal("viewer");
   showViewerPreview(photo, gen, external);
+  $("viewerBack").textContent="Back to "+(state.groupScope?.label || state.person?.name || state.album?.name || viewTitles[state.view]);
   $("imageName").textContent = a.title || photo.filename;
   $("imageMeta").textContent = [
     date(photo),
@@ -1376,8 +1510,8 @@ async function loadImageFaces(photo, gen) {
   }
 }
 // Face tags for the visible page, fetched after the gallery renders.
-async function loadThumbnailFaces(gen) {
-  const ids = state.items.map((p) => p.id);
+async function loadThumbnailFaces(gen, items = state.items) {
+  const ids = items.map((p) => p.id);
   if (!ids.length) return;
   try {
     const faces = await api(
@@ -1385,7 +1519,6 @@ async function loadThumbnailFaces(gen) {
       { ids },
     );
     if (gen !== state.generation) return;
-    state.faceMap = {};
     for (const id of ids) state.faceMap[id] = faces[id] || [];
     refreshThumbnailFaces();
   } catch (e) {
@@ -1478,7 +1611,12 @@ function placeFaceLayer() {
   layer.style.height = r.height + "px";
 }
 $("fullImage").addEventListener("load", placeFaceLayer);
-window.addEventListener("resize", placeFaceLayer);
+function sizeViewerImage(photo=currentPhoto()) {
+  if(!photo)return;const stage=document.querySelector(".viewer-stage"),img=$("fullImage");
+  const ratio=(photo.width || 4)/(photo.height || 3),width=Math.min(Math.max(1,stage.clientWidth-100),Math.max(1,stage.clientHeight)*ratio);
+  img.style.width=width+"px";img.style.height=width/ratio+"px";
+}
+window.addEventListener("resize",()=>{if($("viewer").open){sizeViewerImage();upgradeViewerResolution();}placeFaceLayer();});
 if (typeof ResizeObserver === "function")
   new ResizeObserver(placeFaceLayer).observe($("fullImage"));
 function syncFaceToggles() {
@@ -1750,6 +1888,7 @@ $("closeViewer").onclick = () => {
   if (state.dirty && !confirm("Discard unsaved photo details?")) return;
   closeModal("viewer");
 };
+$("viewerBack").onclick = () => $("closeViewer").click();
 $("viewer").addEventListener("cancel", (e) => {
   if (state.dirty && !confirm("Discard unsaved photo details?"))
     e.preventDefault();
@@ -1901,6 +2040,7 @@ $("clearPerson").onclick = () => {
   load();
 };
 $("refresh").onclick = () => {
+  gridPages.clear();
   load(true);
   refreshStatus();
 };
@@ -1912,11 +2052,7 @@ $("previous").onclick = () => {
   load();
   window.scrollTo(0, 0);
 };
-$("next").onclick = () => {
-  state.offset += state.view === "people" ? 48 : 60;
-  load();
-  window.scrollTo(0, 0);
-};
+$("next").onclick = () => loadMoreGrid();
 $("browseFolders").onclick = async () => {
   const current = $("directory").value.trim();
   try {
@@ -1987,7 +2123,7 @@ window.addEventListener("keydown", (e) => {
     const s = localStorage.getItem("homeImages.seconds");
     if (["8", "15", "30", "60"].includes(s)) $("slideSeconds").value = s;
   } catch (e) {}
-  await loadAlbums().catch((e) => toast(e.message));
+  void loadAlbums().catch((e) => toast(e.message));
   if (state.album)
     state.album =
       state.albums.find((a) => a.id === state.album.id) || state.album;
@@ -2281,3 +2417,15 @@ for (const [id, kind, listId] of [["tag","tag","tagSuggestions"],["place","place
   input.addEventListener("focus",suggest);
   input.addEventListener("input",()=>{clearTimeout(timer);controller?.abort();++generation;list.replaceChildren();timer=setTimeout(suggest,250);});
 }
+
+// Append a batch near the bottom; scrolling never replaces already loaded cards.
+const moreSentinel = document.createElement("div");
+moreSentinel.className = "scroll-sentinel";
+moreSentinel.setAttribute("aria-hidden", "true");
+$("next").closest(".page-controls").after(moreSentinel);
+function maybeLoadMoreGrid() {
+  if (!state.moreFailed && moreSentinel.getBoundingClientRect().top < innerHeight + 700 && !$("viewer").open) void loadMoreGrid();
+}
+const moreObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver(maybeLoadMoreGrid, {rootMargin: "700px"}) : null;
+moreObserver?.observe(moreSentinel);
+window.addEventListener("scroll", maybeLoadMoreGrid, {passive: true});

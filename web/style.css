@@ -1755,3 +1755,19 @@ dialog::backdrop {
 #mergeResultDetails {max-height:40vh;overflow:auto;}
 #mergeResult .dialog-actions {flex-wrap:wrap;}
 #personEditor .merge-footer-actions #mergePerson {margin-top:0;}
+
+#breadcrumbs {flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+#breadcrumbs button {background:none;border:0;color:inherit;padding:4px;cursor:pointer;}#breadcrumbs button:hover{text-decoration:underline;}
+.directory-card {text-align:start;display:flex;flex-direction:column;gap:10px;background:var(--surface);color:inherit;border:1px solid var(--line);border-radius:14px;overflow:hidden;padding:0 0 16px;cursor:pointer;}
+.directory-card img {width:100%;aspect-ratio:4/3;object-fit:cover;}.directory-card strong,.directory-card span {padding:0 14px;overflow-wrap:anywhere;}
+.photo-group-heading {text-align:start;background:none;color:inherit;border:0;cursor:pointer;}.photo-group-heading:hover{text-decoration:underline;}
+.viewer-stage #fullImage {flex:none;max-width:calc(100% - 100px);object-fit:contain;}
+
+.directory-card:hover {border-color:var(--accent);box-shadow:var(--shadow);}.directory-card:focus-visible {outline:2px solid var(--focus);outline-offset:3px;}
+#viewerBack {max-width:28vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+#fullImage.loading {opacity:1;}
+
+.phone-settings-link {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:0 0 14px;border:1px solid var(--accent-line);border-radius:10px;background:var(--accent-soft);color:var(--accent-ink);font-size:15px;font-weight:600;text-decoration:none;}
+.phone-settings-link:hover {border-color:var(--accent);}
+.phone-settings-link:focus-visible {outline:2px solid var(--focus);outline-offset:3px;}

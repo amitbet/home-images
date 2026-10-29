@@ -29,6 +29,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) error {
 }
 func (l *Library) Handler() http.Handler {
 	mux := http.NewServeMux()
+	l.backupRoutes(mux)
 	wrap := func(fn endpoint) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {

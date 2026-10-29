@@ -6,6 +6,8 @@ Linux systemd daemon, or macOS launchd daemon. One binary; no Python, WinSW, or 
 
 Features:
 
+- Optional embedded SFTP phone uploads with QR pairing and PhotoSync setup; see [Phone backup](PHONE_BACKUP.md).
+
 - Read-only photo access under one configurable directory, with nested folder browsing.
 - Random selection without immediate repeats, or alphabetical sequential playback with wraparound.
 - Stable path-based image IDs and independent client cursors.

@@ -80,6 +80,36 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 		clause += ` AND ` + currentPersonImages
 		args = append(args, id, a.models)
 	}
+
+	if kind := r.URL.Query().Get("group_kind"); kind != "" {
+		key := r.URL.Query().Get("group_key")
+		switch kind {
+		case "path", "directory":
+			clause += " AND directory=?"
+			args = append(args, key)
+		case "year":
+			clause += " AND coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE=?"
+			args = append(args, key)
+		case "people":
+			if key == "none" {
+				clause += " AND NOT EXISTS(SELECT 1 FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.image_id=i.id AND ai.signature=i.signature AND ai.models=? AND ai.error='')"
+				args = append(args, a.models)
+			} else {
+				clause += " AND " + currentPersonImages
+				args = append(args, key, a.models)
+			}
+		case "tag":
+			if key == "" {
+				clause += " AND NOT EXISTS(SELECT 1 FROM curation.annotations c,json_each(c.tags) j WHERE c.image_id=i.id AND c.root=? AND j.type='text' AND trim(j.value)!='')"
+				args = append(args, a.lib.rootPath)
+			} else {
+				clause += " AND id IN(SELECT c.image_id FROM curation.annotations c,json_each(c.tags) j WHERE c.root=? AND lower(trim(j.value))=?)"
+				args = append(args, a.lib.rootPath, key)
+			}
+		default:
+			return "", nil, bad(400, "Unknown group kind")
+		}
+	}
 	return clause, args, nil
 }
 

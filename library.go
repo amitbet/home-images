@@ -45,6 +45,7 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
+	backup   *phoneBackup
 	faceCrop *faceCrop // immutable, set only in an isolated preview worker
 
 	config           Config

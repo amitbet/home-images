@@ -534,6 +534,12 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if r.URL.Query().Get("group_by") != "" && r.URL.Query().Get("group_view") == "folders" {
+		return a.photoGroupFolders(w, r, q, mode, clause, args, limit, offset)
+	}
+	if r.URL.Query().Get("group_by") == "directory" {
+		return a.directoryGroups(w, r, q, mode, clause, args, limit, offset)
+	}
 	if r.URL.Query().Get("group_by") != "" {
 		if mode == "semantic" && q != "" {
 			return a.semanticGroupedSearch(w, r, q, clause, args, limit, offset)
@@ -731,9 +737,9 @@ func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	var expr string
 	var args []any
 	switch r.URL.Query().Get("sort") {
-	case "", "filename":
+	case "filename":
 		return "i.path COLLATE NOCASE " + strings.ToUpper(direction) + ",i.path", nil, nil
-	case "taken_at":
+	case "", "taken_at":
 		expr = "nullif(i.taken_at,'')"
 	case "created_at":
 		expr = "i.created_at"

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Phone backup - Home Images</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/app/phone-backup.css?v=3">
+  <script src="/app/phone-backup.js?v=3" defer></script>
+</head>
+<body><main>
+  <nav aria-label="Settings navigation"><a href="/">Back to Home Images</a> <a href="/settings">Settings</a></nav>
+  <h1 id="pageTitle">Phone backup</h1>
+  <p>Send original photos and videos to your home library with PhotoSync.</p>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="admin">
+    <h2>Phone backup settings</h2>
+    <p>Add a phone to display its QR code and connection settings.</p>
+    <div id="manage">
+      <form id="add"><label>Phone name<input id="name" placeholder="My iPhone" maxlength="80" required></label><button>Add phone and show QR code</button></form>
+      <h2>Your phones</h2>
+      <p>Creating a new setup link resets that phone's password. Revoking access keeps uploaded photos.</p>
+      <div id="phones"></div>
+    </div>
+    <section id="pairing" hidden>
+      <h2>Scan with your phone's camera</h2>
+      <img id="qr" width="280" height="280" alt="QR code to open phone setup">
+      <p id="pairExpires"></p>
+      <p>Anyone with this private link can obtain this phone's upload credentials before it expires.</p>
+      <a id="pairLink">Open phone setup and connection settings</a>
+    </section>
+  </section>
+  <section id="setup" hidden>
+    <h2 id="phoneName">Connect your phone</h2>
+    <div id="setupShare" hidden>
+      <h3>Scan to open these settings on your phone</h3>
+      <img id="setupQr" width="280" height="280" alt="QR code for this phone's connection settings">
+      <p>Scan with your phone's camera, then open the link. This opens the setup page; it does not configure PhotoSync automatically.</p>
+      <p id="setupExpires"></p>
+      <a id="setupLink">Open phone setup on this device</a>
+    </div>
+    <ol>
+      <li>Install <a href="https://www.photosync-app.com/" target="_blank" rel="noreferrer">PhotoSync</a>. SFTP and automatic transfers may require a paid license.</li>
+      <li>On iPhone: <button id="download" disabled>Download PhotoSync settings</button><p>Save the file, then use Share &rarr; PhotoSync to import it. If import is unavailable, use the settings below.</p></li>
+      <li>On Android: open PhotoSync &rarr; Configure &rarr; FTP &rarr; Add, choose <strong>SFTP</strong> and copy these settings.</li>
+    </ol>
+    <div id="settings"></div>
+    <p>Compare the server fingerprint when PhotoSync first asks you to trust the server.</p>
+    <h2>Turn on automatic uploads</h2>
+    <p>First send a test photo using Send &rarr; New &rarr; FTP. Then choose this destination under PhotoSync's Autotransfer settings. Use original quality, disable Delete after transfer and Allow overwrite, and disable Transfer to Temporary File.</p>
+    <p>Uploads stay in this phone's separate folder. Deleting photos from your phone does not remove server copies. Interrupted transfers must be retried; completed originals cannot be overwritten.</p>
+    <p>Videos are stored alongside photos; supported images appear in the photo browser.</p>
+  </section>
+</main></body>
+</html>
