@@ -113,7 +113,7 @@
         <div class="toolbar-right">
           <span id="photoDisplayControls">
             <select id="photoGroup" aria-label="Group photos">
-              <option value="">No grouping</option><option value="directory">Group by directory</option><option value="path">Group by folder path</option><option value="year">Group by year</option><option value="people">Group by person</option><option value="tag">Group by tag</option>
+              <option value="">No grouping</option><option value="directory">Group by directory</option><option value="path">Group by folder path</option><option value="year">Group by year</option><option value="month">Group by year and month</option><option value="people">Group by person</option><option value="tag">Group by tag</option>
             </select>
             <select id="photoSort" aria-label="Sort photos">
               <option value="filename">Filename</option>
@@ -124,7 +124,7 @@
               <option value="created_at">File creation date</option>
               <option value="size">File size</option>
             </select>
-            <select id="sortDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+            <select id="sortDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc" selected>Descending</option></select>
             <button id="toggleGridFaces" class="secondary" aria-pressed="true">Face tags on</button>
             <button id="listToggle" class="secondary" aria-pressed="false">List view</button>
           </span>
@@ -173,6 +173,7 @@
           <label for="tag">Tag</label
           ><input id="tag" placeholder="e.g. holiday" list="tagSuggestions" autocomplete="off" /><datalist id="tagSuggestions"></datalist>
         </div>
+        <div class="filter-field"><label for="personFilter">People (all selected)</label><div class="input-row"><input id="personFilter" list="personFilterSuggestions" placeholder="Person name" autocomplete="off"><datalist id="personFilterSuggestions"></datalist><button id="addPersonFilter" type="button" class="secondary">Add</button></div></div>
         <div class="filter-actions">
           <button id="applyFilters" class="primary">Apply filters</button
           ><button id="resetFilters" class="text-button">Reset</button>
@@ -225,28 +226,28 @@
     </main>
     <dialog id="viewer" class="viewer">
       <div class="viewer-top">
-        <button id="viewerBack" class="viewer-button" aria-label="Back to gallery">Back to gallery</button><span id="viewerPosition"></span>
+        <button id="viewerBack" class="viewer-button" aria-label="Back to gallery" title="Back to gallery">&#8592;</button><span id="viewerPosition"></span>
         <div class="viewer-controls">
           <label for="slideSeconds" class="sr-only">Seconds per photo</label
-          ><select id="slideSeconds" class="viewer-button">
-            <option value="8">8 seconds</option>
-            <option value="15">15 seconds</option>
-            <option value="30">30 seconds</option>
-            <option value="60">1 minute</option></select
-          ><button id="shuffle" class="viewer-button" aria-pressed="false">
-            Shuffle off</button
-          ><button id="play" class="viewer-button">▷ Play</button
-          ><button id="zoomOut" class="viewer-button" aria-label="Zoom out">&minus;</button><button id="zoomReset" class="viewer-button" aria-label="Reset zoom">100%</button><button id="zoomIn" class="viewer-button" aria-label="Zoom in">+</button><button
+          ><select id="slideSeconds" class="viewer-button" title="Seconds per photo" aria-label="Seconds per photo">
+            <option value="8">8s</option>
+            <option value="15">15s</option>
+            <option value="30">30s</option>
+            <option value="60">1m</option></select
+          ><button id="shuffle" class="viewer-button" aria-pressed="false" title="Toggle shuffle" aria-label="Toggle shuffle">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h3c5 0 7 14 12 14h3M17 15l4 4-4 4M3 19h3c2 0 3.5-2.2 5-5M14 7c1.2-1.3 2.5-2 4-2h3M17 1l4 4-4 4"/></svg></button
+          ><button id="play" class="viewer-button" title="Play or pause slideshow" aria-label="Play or pause slideshow">&#9654;</button
+          ><button id="zoomOut" class="viewer-button" aria-label="Zoom out" title="Zoom out">&minus;</button><button id="zoomReset" class="viewer-button" aria-label="Reset zoom" title="Reset zoom">100%</button><button id="zoomIn" class="viewer-button" aria-label="Zoom in" title="Zoom in">+</button><button
             id="fullscreen"
             class="viewer-button"
             aria-label="Toggle fullscreen"
-          >
+           title="Toggle fullscreen">
             ⛶</button
           ><button
             id="closeViewer"
             class="viewer-button"
             aria-label="Close image viewer"
-          >
+           title="Close viewer">
             ✕
           </button>
         </div>
@@ -275,7 +276,7 @@
           </div>
           <div class="viewer-bottom">
             <div>
-              <h2 id="imageName"></h2>
+              <p id="imagePath" class="image-path"></p>
               <p id="imageMeta"></p>
               <div id="imagePeople" class="image-people"></div>
             </div>
@@ -284,22 +285,21 @@
                 id="toggleFaces"
                 class="viewer-button"
                 aria-pressed="true"
-              >
-                Face tags on</button
-              ><button id="viewerFavorite" class="viewer-button">
-                ♡ Favorite</button
+               title="Toggle face tags" aria-label="Toggle face tags">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M6 19c0-3 2.7-5 6-5s6 2 6 5M3 8V4h4M17 4h4v4M3 16v4h4M17 20h4v-4"/></svg></button
+              ><button id="viewerFavorite" class="viewer-button" title="Toggle favorite" aria-label="Toggle favorite">&#9825;</button
               ><button
                 id="toggleDetails"
                 class="viewer-button"
                 aria-expanded="false"
-              >
-                Details</button
+               title="Toggle details" aria-label="Toggle details">
+                &#9432;</button
               ><a
                 id="original"
                 class="viewer-button"
                 target="_blank"
                 rel="noopener"
-                >Original ↗</a
+                 title="Open original" aria-label="Open original">Original ↗</a
               >
             </div>
           </div>

@@ -11,7 +11,7 @@ import (
 func (a *AI) photoGroupFolders(w http.ResponseWriter, r *http.Request, q, mode, clause string, args []any, limit, offset int) error {
 	kind := r.URL.Query().Get("group_by")
 	switch kind {
-	case "directory", "path", "year", "people", "tag":
+	case "directory", "path", "year", "month", "people", "tag":
 	default:
 		return bad(400, "Unknown photo grouping")
 	}
@@ -37,6 +37,9 @@ func (a *AI) photoGroupFolders(w http.ResponseWriter, r *http.Request, q, mode, 
 	case "year":
 		cte += `memberships AS (SELECT id image_id,coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE group_key,coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE group_label FROM filtered)`
 		fallback = "Unknown year"
+	case "month":
+		cte += `memberships AS (SELECT id image_id,CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END group_key,CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END group_label FROM filtered)`
+		fallback = "Unknown month"
 	case "people":
 		cte += `labels AS MATERIALIZED (SELECT DISTINCT i.id image_id,CAST(p.id AS TEXT) group_key,coalesce(nullif(p.name,''),'Person '||p.id) group_label FROM filtered i JOIN faces f ON f.image_id=i.id JOIN people p ON p.id=f.person_id JOIN ai_images ai ON ai.image_id=i.id AND ai.signature=i.signature WHERE ai.models=? AND ai.error='' AND p.merged_into IS NULL), memberships AS (SELECT * FROM labels UNION ALL SELECT id,'none','No indexed people' FROM filtered i WHERE NOT EXISTS(SELECT 1 FROM labels l WHERE l.image_id=i.id))`
 		args = append(args, a.models)

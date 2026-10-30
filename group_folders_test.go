@@ -21,13 +21,13 @@ func TestPhotoGroupFoldersAndDrilldown(t *testing.T) {
 		if err := l.ai.save(context.Background(), job, prediction); err != nil {
 			t.Fatal(err)
 		}
-		l.db.Exec("UPDATE images SET taken_at=? WHERE id=?", fmt.Sprintf("202%d-01-01", n), job.ID)
+		l.db.Exec("UPDATE images SET taken_at=? WHERE id=?", fmt.Sprintf("202%d:01:01 12:00:00", n), job.ID)
 	}
 	l.db.Exec("DELETE FROM images WHERE path NOT IN('a.jpg','b.jpg','album_100%/c.jpg')")
 	postTest(t, s, "/api/curation/"+imageID("a.jpg"), `{"tags":["Family","Travel"]}`)
 	postTest(t, s, "/api/curation/"+imageID("b.jpg"), `{"tags":["family"]}`)
 	for _, mode := range []string{"", "&q=group+test"} {
-		for _, kind := range []string{"path", "year", "people", "tag"} {
+		for _, kind := range []string{"path", "year", "month", "people", "tag"} {
 			base := "/api/search?group_by=" + kind + mode
 			var flat struct {
 				Items []groupedPhoto
@@ -82,6 +82,15 @@ func TestPhotoGroupFoldersAndDrilldown(t *testing.T) {
 				}
 			}
 		}
+	}
+	// Multiple drill-downs intersect instead of replacing the previous scope.
+	var narrowed struct {
+		Items []Photo
+		Total int
+	}
+	scopes := url.QueryEscape(`[ {"kind":"year","key":"2020"}, {"kind":"tag","key":"family"} ]`)
+	if getJSON(t, s, "/api/search?group_scopes="+scopes, &narrowed) != 200 || narrowed.Total != 1 || narrowed.Items[0].ID != imageID("a.jpg") {
+		t.Fatalf("nested scopes: %+v", narrowed)
 	}
 	var response map[string]json.RawMessage
 	if getJSON(t, s, "/api/search?group_by=invalid&group_view=folders", &response) != 400 {

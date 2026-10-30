@@ -72,7 +72,18 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 	if err != nil {
 		return "", nil, err
 	}
+	people := []string{}
 	if person := r.URL.Query().Get("person"); person != "" {
+		people = append(people, person)
+	}
+	if raw := r.URL.Query().Get("people_filter"); raw != "" {
+		var extra []string
+		if json.Unmarshal([]byte(raw), &extra) != nil || len(extra) > 50 {
+			return "", nil, bad(400, "Invalid people filter")
+		}
+		people = append(people, extra...)
+	}
+	for _, person := range people {
 		id, e := strconv.ParseInt(person, 10, 64)
 		if e != nil || id < 1 {
 			return "", nil, bad(400, "Invalid person")
@@ -81,14 +92,31 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 		args = append(args, id, a.models)
 	}
 
-	if kind := r.URL.Query().Get("group_kind"); kind != "" {
-		key := r.URL.Query().Get("group_key")
+	groups := []struct {
+		Kind string `json:"kind"`
+		Key  string `json:"key"`
+	}{}
+	if raw := r.URL.Query().Get("group_scopes"); raw != "" {
+		if json.Unmarshal([]byte(raw), &groups) != nil || len(groups) > 50 {
+			return "", nil, bad(400, "Invalid group scopes")
+		}
+	} else if kind := r.URL.Query().Get("group_kind"); kind != "" {
+		groups = append(groups, struct {
+			Kind string `json:"kind"`
+			Key  string `json:"key"`
+		}{kind, r.URL.Query().Get("group_key")})
+	}
+	for _, group := range groups {
+		kind, key := group.Kind, group.Key
 		switch kind {
 		case "path", "directory":
 			clause += " AND directory=?"
 			args = append(args, key)
 		case "year":
 			clause += " AND coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') COLLATE NOCASE=?"
+			args = append(args, key)
+		case "month":
+			clause += " AND CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END = ?"
 			args = append(args, key)
 		case "people":
 			if key == "none" {

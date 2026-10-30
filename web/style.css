@@ -1691,7 +1691,6 @@ dialog::backdrop {
 .viewer-arrow {position:relative;z-index:3;flex-shrink:0;}
 .viewer.zoomed #fullImage {cursor:grab;touch-action:none;}
 .viewer.zoomed #fullImage:active {cursor:grabbing;}
-.viewer.zoomed .face-layer {display:none !important;}
 .viewer-controls .viewer-button:disabled {opacity:.45;}
 
 .photo-group-heading {grid-column:1 / -1;margin:1rem 0 .25rem;font-size:1.2rem;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding-bottom:.5rem;}
@@ -1771,3 +1770,25 @@ dialog::backdrop {
 .phone-settings-link {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:0 0 14px;border:1px solid var(--accent-line);border-radius:10px;background:var(--accent-soft);color:var(--accent-ink);font-size:15px;font-weight:600;text-decoration:none;}
 .phone-settings-link:hover {border-color:var(--accent);}
 .phone-settings-link:focus-visible {outline:2px solid var(--focus);outline-offset:3px;}
+
+/* Viewer chrome floats above the image instead of consuming its canvas. */
+.viewer { padding: 0; }
+.viewer-content { position: relative; width: 100%; height: 100%; gap: 0; }
+.viewer-photo { position: relative; }
+.viewer-stage { height: 100%; gap: 0; justify-content: center; }
+.viewer-stage #fullImage { max-width: 100%; max-height: 100%; }
+.viewer-top, .viewer-bottom { position: absolute; z-index: 2; left: 0; right: 0; padding: 10px 14px; margin: 0; pointer-events: none; }
+.viewer-top { top: 0; background: linear-gradient(#0009, transparent); }
+.viewer-bottom { bottom: 0; min-height: 0; background: linear-gradient(transparent, #000b); }
+.viewer-top > *, .viewer-bottom > * { pointer-events: auto; }
+.viewer-button { min-height: 34px; padding: 5px 9px; background: #171820cc; }
+.viewer-bottom h2 { font-size: 12px; font-weight: 500; max-width: min(45vw, 420px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-bottom p { font-size: 11px; margin: 2px 0; }
+.viewer-arrow { position: absolute; z-index: 1; top: 50%; transform: translateY(-50%); text-shadow: 0 1px 5px #000; }
+#prevImage { left: 8px; } #nextImage { right: 8px; }
+.details-panel { position: absolute; z-index: 3; right: 0; top: 50px; bottom: 50px; background: #121319; overflow: auto; }
+@media (max-width: 700px) { .viewer { padding: 0; } .viewer-top, .viewer-bottom { padding: 6px; } .viewer-top #viewerPosition { display: none; } .viewer-controls, .viewer-actions { gap: 3px; } .viewer-bottom h2 { max-width: 35vw; } }
+
+#shuffle, #play { font-size: 22px; line-height: 1; min-width: 42px; justify-content: center; }
+
+.viewer-bottom .image-path { max-width: min(60vw, 800px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6e7ee; }

@@ -169,7 +169,7 @@ On Windows, use JSON paths such as `"D:\\Photos"` and `"C:\\ProgramData\\HomeIma
 decoding. HEIC metadata and primary image dimensions are extracted in Go; unusual
 containers that cannot be parsed may need `ffprobe` alongside FFmpeg as a fallback.
 
-The server scans at startup and every `scan_interval_seconds` (minimum 30). It serves
+On Windows, the server also watches the photo root recursively and updates changed files and folders. It scans at startup and every `scan_interval_seconds` (minimum 30) to reconcile missed changes; for a large library, a weekly interval (604800 seconds) avoids repeated disk activity. Other platforms currently rely on periodic scans. Watcher errors or notification overflow trigger an additional reconciliation. It serves
 results while indexing, skips unreadable/corrupt/oversized images, and logs errors.
 Failed directory traversal prevents stale-entry pruning for that scan. A missing EXIF
 block does not exclude otherwise valid images. GIF/TIFF previews use the first frame.

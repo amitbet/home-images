@@ -231,6 +231,9 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	watchDone := make(chan struct{})
+	go func() { defer close(watchDone); l.watchChanges(ctx) }()
+	defer func() { <-watchDone }()
 	identityDone := make(chan struct{})
 	go func() { defer close(identityDone); l.backfillImageIdentities(ctx) }()
 	defer func() { <-identityDone }()
@@ -283,14 +286,38 @@ func (l *Library) Scan(ctx context.Context) {
 		return
 	}
 	defer l.scanMu.Unlock()
+	l.scanLocked(ctx)
+}
+
+func (l *Library) scanLocked(ctx context.Context) {
 	l.mu.Lock()
 	l.status.Scanning = true
 	l.status.Errors = 0
 	l.mu.Unlock()
 	defer func() { l.mu.Lock(); l.status.Scanning = false; l.mu.Unlock() }()
+	// Read the compact catalog once instead of issuing a query for each file.
+	known := make(map[string]string)
+	rows, err := l.db.QueryContext(ctx, "SELECT path,signature FROM images")
+	if err != nil {
+		l.scanError(err)
+		return
+	}
+	for rows.Next() {
+		var path, signature string
+		if err = rows.Scan(&path, &signature); err != nil {
+			break
+		}
+		known[path] = signature
+	}
+	rowErr := rows.Err()
+	rows.Close()
+	if err != nil || rowErr != nil {
+		l.scanError(fmt.Errorf("read catalog: %v %v", err, rowErr))
+		return
+	}
 	seen := map[string]bool{}
 	complete := true
-	err := fs.WalkDir(l.root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(l.root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -310,25 +337,15 @@ func (l *Library) Scan(ctx context.Context) {
 			return nil
 		}
 		seen[path] = true
-		f, err := l.open(path)
-		if err != nil {
-			l.scanError(fmt.Errorf("open %s: %w", path, err))
-			return nil
-		}
-		info, err := f.Stat()
-		f.Close()
+		// Directory entries on Windows already contain size and modification time.
+		info, err := d.Info()
 		if err != nil {
 			complete = false
 			l.scanError(err)
 			return nil
 		}
 		signature := fmt.Sprintf("go1:%d:%d", info.Size(), info.ModTime().UnixNano())
-		var previous string
-		err = l.db.QueryRowContext(ctx, "SELECT signature FROM images WHERE path=?", path).Scan(&previous)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if previous == signature {
+		if known[path] == signature {
 			return nil
 		}
 		photo, err := l.metadata(ctx, path)
@@ -352,28 +369,10 @@ func (l *Library) Scan(ctx context.Context) {
 		}
 	}
 	if complete {
-		rows, err := l.db.QueryContext(ctx, "SELECT path FROM images")
-		if err != nil {
-			l.scanError(err)
-			return
-		}
-		var stale []string
-		for rows.Next() {
-			var p string
-			if err = rows.Scan(&p); err != nil {
-				break
+		for p := range known {
+			if seen[p] {
+				continue
 			}
-			if !seen[p] {
-				stale = append(stale, p)
-			}
-		}
-		rowErr := rows.Err()
-		rows.Close()
-		if err != nil || rowErr != nil {
-			l.scanError(fmt.Errorf("prune: %v %v", err, rowErr))
-			return
-		}
-		for _, p := range stale {
 			if _, err = l.db.ExecContext(ctx, "DELETE FROM images WHERE path=?", p); err != nil {
 				l.scanError(err)
 				return

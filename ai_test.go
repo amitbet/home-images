@@ -102,6 +102,22 @@ func TestAIIndexSearchNamesAndInvalidation(t *testing.T) {
 	if getJSON(t, s, "/api/search?person="+fmtID(id)+"&mode=metadata", &result) != 200 || result.Total != 2 {
 		t.Fatal(result)
 	}
+	// Multiple people require every selected face to be present.
+	other, err := a.db.Exec("INSERT INTO people(model,embedding) VALUES(?,?)", l.config.ML.FaceModel, vector{0, 1, 0}.blob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := other.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.db.Exec("INSERT INTO faces(image_id,person_id,box,score,width,height,embedding) VALUES(?,?, '{}', .9,64,96,?)", j.ID, otherID, vector{0, 1, 0}.blob()); err != nil {
+		t.Fatal(err)
+	}
+	peopleFilter := url.QueryEscape(fmt.Sprintf(`["%d","%d"]`, id, otherID))
+	if getJSON(t, s, "/api/search?mode=metadata&people_filter="+peopleFilter, &result) != 200 || result.Total != 1 || result.Items[0].ID != j.ID {
+		t.Fatalf("people intersection: %+v", result)
+	}
 	// Search must rank actual vectors and combine them with a person filter.
 	a.lib.config.ML.URL = "http://unused"
 	a.textCache["beach"] = vector{1, 0, 0}

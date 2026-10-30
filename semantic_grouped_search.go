@@ -12,7 +12,7 @@ const semanticGroupPool = 1200
 func (a *AI) semanticGroupedSearch(w http.ResponseWriter, r *http.Request, q, clause string, args []any, limit, offset int) error {
 	kind := r.URL.Query().Get("group_by")
 	switch kind {
-	case "path", "year", "people", "tag":
+	case "path", "year", "month", "people", "tag":
 	default:
 		return bad(400, "Unknown photo grouping")
 	}
@@ -39,6 +39,9 @@ func (a *AI) semanticGroupedSearch(w http.ResponseWriter, r *http.Request, q, cl
 	case "year":
 		cte += `memberships AS MATERIALIZED (SELECT id image_id,coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') group_key,coalesce(nullif(substr(coalesce(nullif(taken_at,''),created_at),1,4),''),'Unknown year') group_label,rank,score FROM filtered), `
 		fallback = "Unknown year"
+	case "month":
+		cte += `memberships AS MATERIALIZED (SELECT id image_id,CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END group_key,CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END group_label,rank,score FROM filtered), `
+		fallback = "Unknown month"
 	case "people":
 		cte += `labels AS MATERIALIZED (
  SELECT DISTINCT i.id image_id,CAST(p.id AS TEXT) group_key,coalesce(nullif(p.name,''),'Person '||p.id) group_label,i.rank,i.score
@@ -65,7 +68,7 @@ func (a *AI) semanticGroupedSearch(w http.ResponseWriter, r *http.Request, q, cl
 		direction = "DESC"
 	}
 	groupOrder := "g.group_label COLLATE NOCASE " + direction + ",g.group_key,"
-	if kind == "path" || kind == "year" {
+	if kind == "path" || kind == "year" || kind == "month" {
 		groupOrder = "g.group_key COLLATE NOCASE " + direction + ",g.group_key " + direction + ","
 	}
 	// Missing groups stay last in either direction. These keys are constants,

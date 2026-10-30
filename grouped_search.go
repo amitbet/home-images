@@ -28,7 +28,7 @@ type photoGroupSummary struct {
 // Build memberships before pagination. A photo can belong to several people/tags.
 func (a *AI) groupedSearch(w http.ResponseWriter, r *http.Request, clause string, args []any, order string, sortArgs []any, limit, offset int) error {
 	kind := r.URL.Query().Get("group_by")
-	if kind == "path" || kind == "year" {
+	if kind == "path" || kind == "year" || kind == "month" {
 		return a.simpleGroupedSearch(w, r, clause, args, order, sortArgs, limit, offset, kind)
 	}
 	if kind == "tag" {
@@ -238,6 +238,9 @@ func (a *AI) simpleGroupedSearch(w http.ResponseWriter, r *http.Request, clause 
 	case "path":
 		key = "i.directory"
 		label = "coalesce(nullif(i.directory,''),'Root folder')"
+	case "month":
+		key = "CASE WHEN replace(substr(coalesce(nullif(i.taken_at,''),i.created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(i.taken_at,''),i.created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(i.taken_at,''),i.created_at),1,7),':','-') ELSE 'Unknown month' END"
+		label = key
 	case "year":
 		key = "coalesce(nullif(substr(coalesce(nullif(i.taken_at,''),i.created_at),1,4),''),'Unknown year')"
 		label = key
@@ -251,10 +254,14 @@ func (a *AI) simpleGroupedSearch(w http.ResponseWriter, r *http.Request, clause 
 		direction = "DESC"
 	}
 	groupOrder := key + " COLLATE NOCASE " + direction + "," + order
-	if kind == "year" {
+	if kind == "year" || kind == "month" {
 		// Group boundaries precede the photo sort, so their direction must
 		// agree too. Missing dates stay at the end in either direction.
-		groupOrder = "CASE WHEN " + key + "='Unknown year' THEN 1 ELSE 0 END," + key + " COLLATE NOCASE " + direction + "," + order
+		fallback := "Unknown year"
+		if kind == "month" {
+			fallback = "Unknown month"
+		}
+		groupOrder = "CASE WHEN " + key + "='" + fallback + "' THEN 1 ELSE 0 END," + key + " COLLATE NOCASE " + direction + "," + order
 	}
 	if kind == "empty_tag" {
 		groupOrder = order
