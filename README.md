@@ -763,3 +763,33 @@ at their relative paths before reconnecting the catalog, AI data and root-scoped
 curation. An unverified root change is rejected rather than clearing existing data.
 Remove `relocate_from` after successful relocation. Use a separate data directory
 when configuring an unrelated library.
+
+### Folder overlap cleanup
+
+The default `/duplicates` view compares directory trees at a selected depth,
+using indexed content IDs and exact file checksums. For example, depth 2 compares
+`ALBUM/Album A` with `ALBUM/Album B`, including all their descendants. A scope such
+as `ALBUM` with depth 1 compares the same trees. Files shallower than the selected
+depth are not grouped. Results show directional full/partial photo coverage,
+metadata variants, pending hashes and potential duplicate bytes, ordered by space.
+These are logical photo-byte estimates; coverage never authorizes removal of an
+entire filesystem directory or of unindexed/non-photo files.
+
+Review creates a persisted, immutable plan containing the source/retained IDs,
+paths and expected exact checksums. Starting moves only these matching photos to
+Trash. The worker verifies bytes and path membership again, skips changed or
+unavailable files, and leaves unique photos and metadata variants in place. Parent
+and child trees cannot be chosen as source and retained trees. One cleanup job
+runs at a time, independently of the browser. Progress, per-file errors and journals
+are persisted; cancellation preserves completed work, and a restart marks unfinished
+jobs interrupted for explicit resume. Recorded moves can be reconnected if a
+process stopped between the filesystem move and the progress update.
+
+Completed groups offer **Restore this group** and **Permanently delete this group**.
+These operate on successful copies still in Trash and reuse the single-copy
+verification and non-overwriting restoration rules. Permanent deletion requires
+confirmation and rechecks that a retained exact original remains available.
+The previous individual-photo interface is available under **Individual photos &
+Trash**. Folder comparisons use a short-lived in-memory snapshot for pagination;
+Refresh and cleanup completion invalidate it. Creating a plan always reads the
+current catalog, and actual cleanup always reads the originals for verification.

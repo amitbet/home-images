@@ -45,8 +45,15 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
-	backup   *phoneBackup
-	faceCrop *faceCrop // immutable, set only in an isolated preview worker
+	overlapMu          sync.Mutex
+	overlapCache       *cachedDirectoryOverlaps
+	duplicateJobMu     sync.Mutex
+	duplicateJobCancel context.CancelFunc
+	duplicateJobID     string
+	duplicateJobWG     sync.WaitGroup
+	duplicateClosing   bool
+	backup             *phoneBackup
+	faceCrop           *faceCrop // immutable, set only in an isolated preview worker
 
 	config           Config
 	rootPath         string
@@ -100,6 +107,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	if err = ensureImageIdentitySchema(db); err != nil {
+		l.Close()
+		return nil, err
+	}
+	if err = l.ensureDuplicateBatchSchema(); err != nil {
 		l.Close()
 		return nil, err
 	}
@@ -167,6 +178,14 @@ func (l *Library) optimizeDatabases(ctx context.Context) {
 	}
 }
 func (l *Library) Close() {
+	l.duplicateJobMu.Lock()
+	l.duplicateClosing = true
+	if l.duplicateJobCancel != nil {
+		l.duplicateJobCancel()
+	}
+	l.duplicateJobMu.Unlock()
+	l.duplicateJobWG.Wait()
+
 	if l.backup != nil {
 		l.backup.Close()
 	}
