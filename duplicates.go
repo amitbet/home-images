@@ -96,65 +96,69 @@ func (l *Library) quarantineDuplicate(w http.ResponseWriter, r *http.Request) er
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return bad(400, "Invalid request")
 	}
-	if body.Keep == body.Remove || body.Keep == "" || body.Remove == "" {
-		return bad(400, "Choose a copy to keep and a different copy to quarantine")
+ result,err:=l.quarantinePair(r,body.Keep,body.Remove)
+ if err!=nil{return err};return writeJSON(w,200,result)
+}
+func (l *Library) quarantinePair(r *http.Request,keepID,removeID string)(map[string]any,error){
+	if keepID == removeID || keepID == "" || removeID == "" {
+		return nil,bad(400, "Choose a copy to keep and a different copy to move to Trash")
 	}
 	l.scanMu.Lock()
 	defer l.scanMu.Unlock()
-	keep, kh, err := l.liveFileHash(r, body.Keep)
+	keep, kh, err := l.liveFileHash(r, keepID)
 	if err != nil {
-		return err
+		return nil,err
 	}
-	remove, rh, err := l.liveFileHash(r, body.Remove)
+	remove, rh, err := l.liveFileHash(r, removeID)
 	if err != nil {
-		return err
+		return nil,err
 	}
 	if kh != rh {
-		return bad(409, "These files are not exact duplicates. Their metadata or image data differs.")
+		return nil,bad(409, "These files are not exact duplicates. Their metadata or image data differs.")
 	}
 	raw := make([]byte, 16)
 	if _, err = rand.Read(raw); err != nil {
-		return err
+		return nil,err
 	}
 	token := hex.EncodeToString(raw)
 	dir := ".homeimages-quarantine/" + token
 	if err = l.root.MkdirAll(filepath.FromSlash(dir), 0750); err != nil {
-		return fmt.Errorf("cannot create quarantine (service needs write access): %w", err)
+		return nil,fmt.Errorf("cannot create Trash (service needs write access): %w", err)
 	}
 	dest := dir + "/" + remove.Filename
 	// Write the recovery record before moving the file; it survives a crash.
 	_, err = l.db.ExecContext(r.Context(), "INSERT INTO duplicate_quarantine(token,image_id,path,quarantine_path,created_at,keep_id,file_hash) VALUES(?,?,?,?,?,?,?)", token, remove.ID, remove.Path, dest, time.Now().UTC().Format(time.RFC3339), keep.ID, kh)
 	if err != nil {
-		return err
+		return nil,err
 	}
 	if err = l.root.Rename(filepath.FromSlash(remove.Path), filepath.FromSlash(dest)); err != nil {
-		return fmt.Errorf("cannot quarantine file (service needs permission to move this copy): %w", err)
+		return nil,fmt.Errorf("cannot move file to Trash (service needs permission to move this copy): %w", err)
 	}
 	qf, e := l.root.Open(filepath.FromSlash(dest))
 	if e != nil {
 		_ = l.root.Rename(filepath.FromSlash(dest), filepath.FromSlash(remove.Path))
-		return e
+		return nil,e
 	}
 	qh, _, e := hashOriginal(r.Context(), qf, remove.Path, nil)
 	qf.Close()
 	if (e != nil && qh.FileHash == "") || qh.FileHash != rh {
 		_ = l.root.Rename(filepath.FromSlash(dest), filepath.FromSlash(remove.Path))
-		return bad(409, "Selected copy changed; cleanup cancelled")
+		return nil,bad(409, "Selected copy changed; cleanup cancelled")
 	}
 	// Verify the retained copy is still available before changing the catalog.
 	if _, h, e := l.liveFileHash(r, keep.ID); e != nil || h != kh {
 		_ = l.root.Rename(filepath.FromSlash(dest), filepath.FromSlash(remove.Path))
-		return bad(409, "Retained copy changed; cleanup cancelled")
+		return nil,bad(409, "Retained copy changed; cleanup cancelled")
 	}
 	if err = l.preserveDuplicateCuration(r, keep.ID, remove.ID); err != nil {
 		_ = l.root.Rename(filepath.FromSlash(dest), filepath.FromSlash(remove.Path))
-		return err
+		return nil,err
 	}
 	if err = l.retirePath(r.Context(), remove.Path); err != nil {
 		_ = l.root.Rename(filepath.FromSlash(dest), filepath.FromSlash(remove.Path))
-		return err
+		return nil,err
 	}
-	return writeJSON(w, 200, map[string]any{"ok": true, "token": token, "kept": keep.Path, "quarantined": remove.Path})
+	return map[string]any{"ok": true, "token": token, "kept": keep.Path, "quarantined": remove.Path},nil
 }
 func (l *Library) quarantineList(w http.ResponseWriter, r *http.Request) error {
 	rows, err := l.read.QueryContext(r.Context(), "SELECT token,path,quarantine_path,created_at FROM duplicate_quarantine ORDER BY created_at DESC")
@@ -188,7 +192,7 @@ func (l *Library) restoreDuplicate(w http.ResponseWriter, r *http.Request) error
 	defer l.scanMu.Unlock()
 	var path, dest string
 	if err := l.db.QueryRowContext(r.Context(), "SELECT path,quarantine_path FROM duplicate_quarantine WHERE token=?", body.Token).Scan(&path, &dest); err != nil {
-		return bad(404, "Quarantined copy not found")
+		return bad(404, "Copy not found in Trash")
 	}
 	if _, err := l.root.Lstat(filepath.FromSlash(path)); !os.IsNotExist(err) {
 		return bad(409, "Original path is occupied or inaccessible")
@@ -233,7 +237,7 @@ func (l *Library) purgeDuplicate(w http.ResponseWriter, r *http.Request) error {
 	defer l.scanMu.Unlock()
 	var dest, keep, expected string
 	if err := l.db.QueryRowContext(r.Context(), "SELECT quarantine_path,coalesce(keep_id,''),coalesce(file_hash,'') FROM duplicate_quarantine WHERE token=?", body.Token).Scan(&dest, &keep, &expected); err != nil {
-		return bad(404, "Quarantined copy not found")
+		return bad(404, "Copy not found in Trash")
 	}
 	if expected == "" || keep == "" {
 		return bad(409, "This recovery record cannot authorize permanent deletion")
@@ -248,7 +252,7 @@ func (l *Library) purgeDuplicate(w http.ResponseWriter, r *http.Request) error {
 	h, _, err := hashOriginal(r.Context(), f, dest, nil)
 	f.Close()
 	if (err != nil && h.FileHash == "") || h.FileHash != expected {
-		return bad(409, "Quarantined copy changed; permanent deletion refused")
+		return bad(409, "Copy in Trash changed; permanent deletion refused")
 	}
 	if err = l.root.Remove(filepath.FromSlash(dest)); err != nil {
 		return err
