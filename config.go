@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	RelocateFrom string   `json:"relocate_from,omitempty"`
 	JPEGDecoder  string   `json:"jpeg_decoder,omitempty"`
 	Root         string   `json:"root"`
 	DataDir      string   `json:"data_dir"`

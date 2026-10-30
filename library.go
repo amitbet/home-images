@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	// Cover grouping/autocomplete fields without scanning compressed metadata pages.
-	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_directory_exact ON images(directory,id,signature); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_identity_size ON images(size_bytes) WHERE file_hash IS NOT NULL; CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_directory_exact ON images(directory,id,signature); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
 		l.Close()
 		return nil, err
 	}
@@ -123,11 +123,15 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		l.Close()
 		return nil, err
 	}
-	if previous != "" && previous != rootPath {
-		if _, err = db.Exec("DELETE FROM images; DELETE FROM locations; DELETE FROM phone_backup_hashes"); err != nil {
+	if previous != "" && previous != rootPath && c.RelocateFrom == previous {
+		if err = l.verifyRootRelocation(context.Background()); err != nil {
 			l.Close()
 			return nil, err
 		}
+	}
+	if previous != "" && previous != rootPath && c.RelocateFrom != previous {
+		l.Close()
+		return nil, fmt.Errorf("photo root changed from %s; set relocate_from to that exact path to verify and reconnect the library", previous)
 	}
 	if _, err = db.Exec("INSERT OR REPLACE INTO settings VALUES('root',?)", rootPath); err != nil {
 		l.Close()
@@ -333,6 +337,9 @@ func (l *Library) scanLocked(ctx context.Context) {
 			}
 			return nil
 		}
+		if d.IsDir() && (path == ".homeimages-quarantine" || strings.HasPrefix(path, ".homeimages-quarantine/")) {
+			return fs.SkipDir
+		}
 		if d.IsDir() || !supported(path) {
 			return nil
 		}
@@ -354,13 +361,7 @@ func (l *Library) scanLocked(ctx context.Context) {
 			_, dbErr := l.db.ExecContext(ctx, "DELETE FROM images WHERE path=?", path)
 			return dbErr
 		}
-		encoded, err := json.Marshal(photo)
-		if err != nil {
-			l.scanError(err)
-			return nil
-		}
-		_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images(id,path,directory,signature,metadata,search) VALUES(?,?,?,?,metadata_pack(?),metadata_search(?))", photo.ID, path, photo.Directory, signature, string(encoded), string(encoded))
-		return err
+		return l.storePhoto(ctx, photo, signature)
 	})
 	if err != nil {
 		complete = false
@@ -373,7 +374,7 @@ func (l *Library) scanLocked(ctx context.Context) {
 			if seen[p] {
 				continue
 			}
-			if _, err = l.db.ExecContext(ctx, "DELETE FROM images WHERE path=?", p); err != nil {
+			if err = l.retirePath(ctx, p); err != nil {
 				l.scanError(err)
 				return
 			}
@@ -388,7 +389,7 @@ func (l *Library) scanLocked(ctx context.Context) {
 func imageID(path string) string { s := sha256.Sum256([]byte(path)); return hex.EncodeToString(s[:12]) }
 func (l *Library) get(ctx context.Context, id string) (Photo, error) {
 	var encoded string
-	err := l.read.QueryRowContext(ctx, "SELECT metadata_json(metadata) FROM images WHERE id=?", id).Scan(&encoded)
+	err := l.read.QueryRowContext(ctx, `SELECT metadata_json(metadata) FROM images WHERE id=? OR id IN(SELECT file_id FROM photo_files WHERE asset_id=?) OR id IN(SELECT live.id FROM images live JOIN image_tombstones old ON old.file_hash=live.file_hash WHERE old.id=? AND live.hash_signature=live.signature) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,path LIMIT 1`, id, id, id, id).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Photo{}, bad(404, "Unknown image")
 	}
@@ -399,6 +400,7 @@ func (l *Library) get(ctx context.Context, id string) (Photo, error) {
 	if err = json.Unmarshal([]byte(encoded), &p); err != nil {
 		return p, err
 	}
+	p.AbsolutePath = filepath.Join(l.rootPath, filepath.FromSlash(p.Path))
 	f, err := l.open(p.Path)
 	if err != nil {
 		return p, err

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -165,18 +164,13 @@ func TestCurationRootIsolation(t *testing.T) {
 	config := l.config
 	config.Root = root + "/album_100%"
 	other, err := newLibrary(config)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		other.Close()
+		t.Fatal("unverified root change accepted")
 	}
-	defer other.Close()
-	a, err := other.ai.annotation(id)
-	if err != nil || a.Favorite {
-		t.Fatal("annotations leaked between roots", a, err)
+	a, err := l.ai.annotation(id)
+	if err != nil || !a.Favorite {
+		t.Fatal("rejected root change damaged original annotations", a, err)
 	}
-	server := httptest.NewServer(other.Handler())
-	defer server.Close()
-	var result struct{ Items []any }
-	if getJSON(t, server, "/api/albums", &result) != 200 || len(result.Items) != 0 {
-		t.Fatal("root-scoped albums")
-	}
+
 }

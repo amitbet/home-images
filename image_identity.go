@@ -34,9 +34,39 @@ func ensureImageIdentitySchema(db *sql.DB) error {
  CREATE TRIGGER IF NOT EXISTS image_hash_invalidate AFTER UPDATE OF signature ON images WHEN old.signature!=new.signature BEGIN
  UPDATE images SET content_id=NULL,file_hash=NULL,hash_signature=NULL,hash_error=NULL,hash_retry_at=0 WHERE id=new.id;
  END;
+ CREATE TABLE IF NOT EXISTS image_tombstones(id TEXT PRIMARY KEY,path TEXT NOT NULL,file_hash TEXT,content_id TEXT,signature TEXT,metadata BLOB,size_bytes INTEGER);
+ CREATE INDEX IF NOT EXISTS tombstone_size ON image_tombstones(size_bytes);
+ CREATE INDEX IF NOT EXISTS tombstone_file_hash ON image_tombstones(file_hash);
+ CREATE TRIGGER IF NOT EXISTS image_asset_invalidate AFTER UPDATE OF signature ON images WHEN old.signature!=new.signature BEGIN DELETE FROM photo_files WHERE file_id=new.id; END;
+ CREATE TABLE IF NOT EXISTS photo_assets(id TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS photo_files(file_id TEXT PRIMARY KEY,asset_id TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id);
+ CREATE TABLE IF NOT EXISTS duplicate_quarantine(token TEXT PRIMARY KEY,image_id TEXT,path TEXT,quarantine_path TEXT,created_at TEXT,keep_id TEXT,file_hash TEXT);
  CREATE TABLE IF NOT EXISTS phone_backup_hashes(path TEXT PRIMARY KEY,signature TEXT NOT NULL,content_id TEXT,file_hash TEXT NOT NULL,hash_error TEXT);`)
 	if err != nil {
 		return err
+	}
+	var populated int
+	if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM photo_files)").Scan(&populated); err != nil {
+		return err
+	}
+	if populated == 0 {
+		if _, err = tx.Exec(` INSERT OR IGNORE INTO photo_assets SELECT DISTINCT coalesce(content_id,file_hash) FROM images WHERE file_hash IS NOT NULL AND hash_signature=signature;
+ INSERT OR IGNORE INTO photo_files SELECT id,coalesce(content_id,file_hash) FROM images WHERE file_hash IS NOT NULL AND hash_signature=signature;
+`); err != nil {
+			return err
+		}
+	}
+	for _, column := range []string{"keep_id", "file_hash"} {
+		var n int
+		if err = tx.QueryRow("SELECT count(*) FROM pragma_table_info('duplicate_quarantine') WHERE name=?", column).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err = tx.Exec("ALTER TABLE duplicate_quarantine ADD COLUMN " + column + " TEXT"); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }
@@ -93,6 +123,16 @@ func (l *Library) hashIdentity(ctx context.Context, j identityJob) error {
 }
 func (l *Library) saveIdentity(ctx context.Context, j identityJob, h originalHashes, message string) error {
 	_, err := l.db.ExecContext(ctx, `UPDATE images SET content_id=nullif(?,''),file_hash=nullif(?,''),hash_signature=?,hash_error=nullif(?,''),hash_retry_at=0 WHERE id=? AND path=? AND signature=?`, h.ContentID, h.FileHash, j.Signature, message, j.ID, j.Path, j.Signature)
+	if err == nil && h.FileHash != "" {
+		asset := h.ContentID
+		if asset == "" {
+			asset = h.FileHash
+		}
+		_, err = l.db.ExecContext(ctx, "INSERT OR IGNORE INTO photo_assets(id) VALUES(?)", asset)
+		if err == nil {
+			_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO photo_files(file_id,asset_id) SELECT id,? FROM images WHERE id=? AND signature=?", asset, j.ID, j.Signature)
+		}
+	}
 	return err
 }
 

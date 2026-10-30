@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,6 +16,9 @@ import (
 // entries on transient read errors or when the root is unavailable.
 func (l *Library) reconcileChangedPath(ctx context.Context, path string) error {
 	path = filepath.ToSlash(path)
+	if path == ".homeimages-quarantine" || strings.HasPrefix(path, ".homeimages-quarantine/") {
+		return nil
+	}
 	name, err := cleanRelative(path)
 	if err != nil || name == "." {
 		return fmt.Errorf("invalid notification path %q", path)
@@ -29,8 +31,7 @@ func (l *Library) reconcileChangedPath(ctx context.Context, path string) error {
 		if e != nil || !root.IsDir() {
 			return fmt.Errorf("root unavailable")
 		}
-		_, e = l.db.ExecContext(ctx, `DELETE FROM images WHERE path=? OR substr(path,1,length(?)+1)=?||'/'`, path, path, path)
-		return e
+		return l.retireTree(ctx, path)
 	}
 	if err != nil {
 		return err
@@ -87,11 +88,7 @@ func (l *Library) indexChangedFile(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(photo)
-	if err != nil {
-		return err
-	}
-	_, err = l.db.ExecContext(ctx, "INSERT OR REPLACE INTO images(id,path,directory,signature,metadata,search) VALUES(?,?,?,?,metadata_pack(?),metadata_search(?))", photo.ID, path, photo.Directory, signature, string(encoded), string(encoded))
+	err = l.storePhoto(ctx, photo, signature)
 	if err == nil {
 		log.Printf("Filesystem watcher indexed %s", path)
 	}

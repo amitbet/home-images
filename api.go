@@ -48,6 +48,15 @@ func (l *Library) Handler() http.Handler {
 			}
 		}
 	}
+	mux.HandleFunc("GET /api/duplicates", wrap(l.duplicateGroups))
+	mux.HandleFunc("GET /api/duplicates/quarantine", wrap(l.quarantineList))
+	mux.HandleFunc("/api/duplicates/quarantine-copy", l.ai.mutation(l.quarantineDuplicate))
+	mux.HandleFunc("/api/duplicates/restore", l.ai.mutation(l.restoreDuplicate))
+	mux.HandleFunc("/api/duplicates/purge", l.ai.mutation(l.purgeDuplicate))
+	mux.HandleFunc("/duplicates", wrap(func(w http.ResponseWriter, r *http.Request) error {
+		http.ServeFileFS(w, r, webFS, "duplicates.html")
+		return nil
+	}))
 	mux.HandleFunc("/health", wrap(l.health))
 	mux.Handle("/app/", http.StripPrefix("/app/", webHandler))
 	mux.HandleFunc("/favicon.svg", wrap(serveUI))

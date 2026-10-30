@@ -98,7 +98,7 @@ func newAI(l *Library) (*AI, error) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fail(err)
 	}
-	if root != "" && root != l.rootPath {
+	if root != "" && root != l.rootPath && l.config.RelocateFrom != root {
 		if _, err = a.db.Exec("DELETE FROM faces;DELETE FROM people;DELETE FROM ai_images;DELETE FROM person_dismissals;DELETE FROM face_overrides;DELETE FROM ai_settings WHERE key='merge_undo';"); err != nil {
 			return fail(err)
 		}
@@ -114,6 +114,23 @@ func newAI(l *Library) (*AI, error) {
 	if err := a.initCuration(); err != nil {
 		return fail(err)
 	}
+	if l.config.RelocateFrom != "" && l.config.RelocateFrom != l.rootPath {
+		root = l.config.RelocateFrom
+		tx, e := a.db.Begin()
+		if e != nil {
+			return fail(e)
+		}
+		for _, table := range []string{"annotations", "albums", "collections"} {
+			if _, e = tx.Exec("UPDATE curation."+table+" SET root=? WHERE root=?", l.rootPath, root); e != nil {
+				tx.Rollback()
+				return fail(e)
+			}
+		}
+		if e = tx.Commit(); e != nil {
+			return fail(e)
+		}
+	}
+
 	return a, nil
 }
 func (a *AI) Close() {
@@ -291,7 +308,7 @@ func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
 	}
 }
 func (a *AI) cleanup(ctx context.Context) {
-	_, err := a.db.ExecContext(ctx, `DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images);`)
+	_, err := a.db.ExecContext(ctx, `DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones);`)
 	if err != nil && ctx.Err() == nil {
 		a.setError(err)
 	}

@@ -728,3 +728,38 @@ so overlapping group memberships are counted once.
 Bulk merging indexes alias lookups and writes the complete undo chain once per
 batch. Completion reports identify skipped source groups and their current person
 where available. A storage error still rolls back all newly merged valid sources.
+
+
+### Stable content identities and duplicate cleanup
+
+`photo_assets` stores content-addressed identities and `photo_files` links each
+indexed file ID to its asset. Existing file IDs and annotations are retained.
+Normal scans still compare path, size and modification time; new files are hashed
+in the background. When a new path could be a missing file, an exact full-file
+hash verifies a move and reconnects its existing ID. Removed catalog rows retain
+recovery information so a later move can reconnect them. Ambiguous matches remain
+separate; they are not silently merged. Metadata-only variants share a content
+identity for supported formats but retain their individual metadata and annotations.
+
+Open **Manage duplicates** (`/duplicates`) to review all matching file locations.
+Choose a retained copy and quarantine an exact duplicate. The server hashes both
+originals again before moving the selected copy into `.homeimages-quarantine`
+inside the photo root. It rechecks the moved and retained bytes, and records a
+recovery token before moving. This directory is excluded from scans and watcher
+updates. Restore is available on the same screen; occupied original paths are
+never overwritten. Favorites, tags and album membership are carried to the retained copy. Conflicting
+text and face information for quarantined copies remain in recovery records.
+Restore uses an atomic non-replacing hard link before unlinking quarantine; the
+library volume must support hard links (NTFS does). The service needs filesystem permission to move selected files;
+permission errors are reported without changing their catalog entries. Quarantine itself frees no disk space. The separate **Permanently delete** action
+requires confirmation and verifies the retained original and quarantined copy
+again before deleting the quarantined file. It refuses deletion if either copy
+has changed or the retained file is missing. Permanent deletion cannot be undone.
+
+To relocate the entire library, stop the service, move the directory, update
+`root`, and set `relocate_from` to the exact previous absolute root path in the
+configuration. Startup verifies a sample of up to ten previously hashed originals
+at their relative paths before reconnecting the catalog, AI data and root-scoped
+curation. An unverified root change is rejected rather than clearing existing data.
+Remove `relocate_from` after successful relocation. Use a separate data directory
+when configuring an unrelated library.
