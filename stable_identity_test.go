@@ -131,7 +131,9 @@ func TestDuplicateQuarantineRestoreAndVerification(t *testing.T) {
 	}
 }
 func TestExplicitRootRelocationPreservesLibrary(t *testing.T) {
-	l, s, root := fixture(t)
+	l, s, _ := fixture(t)
+	// Relocation requires the stored canonical path (macOS /var resolves to /private/var).
+	root := l.rootPath
 	hashFixture(t, l)
 	id := imageID("a.jpg")
 	if postTest(t, s, "/api/curation/"+id, `{"favorite":true}`) != 200 {
