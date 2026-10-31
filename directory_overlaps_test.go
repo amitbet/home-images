@@ -250,13 +250,6 @@ func TestBulkCleanupPlanSurvivesServiceRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	server := httptest.NewServer(reopened.Handler())
-	defer server.Close()
-	var state string
-	if err = reopened.db.QueryRow("SELECT state FROM duplicate_batches WHERE id=?", id).Scan(&state); err != nil || state != "interrupted" {
-		t.Fatal("restart did not preserve interrupted plan", state, err)
-	}
-	id = startBatchTest(t, reopened, server, id, "resume")
 	done, failed := waitBatch(t, reopened, id)
 	if done != 2 || failed != 0 {
 		t.Fatal(done, failed)
@@ -316,5 +309,101 @@ func TestConcurrentCleanupJobsCancelIndependently(t *testing.T) {
 	done, failed := waitBatch(t, l, second)
 	if done+failed != 2 {
 		t.Fatalf("second job did not finish: %d done, %d failed", done, failed)
+	}
+}
+
+func TestTrashJobsResumeAfterShutdownButNotCancellation(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	id := previewBatch(t, s)
+	cfg := l.config
+	l.scanMu.Lock()
+	startBatchTest(t, l, s, id, "quarantine")
+	closed := make(chan struct{})
+	go func() { l.Close(); close(closed) }()
+	for {
+		l.duplicateJobMu.Lock()
+		closing := l.duplicateClosing
+		l.duplicateJobMu.Unlock()
+		if closing {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	l.scanMu.Unlock()
+	<-closed
+	reopened, err := newLibrary(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, failed := waitBatch(t, reopened, id)
+	if done != 2 || failed != 0 {
+		t.Fatalf("resumed: %d done, %d failed", done, failed)
+	}
+	reopened.Close()
+}
+
+func TestCancelledTrashJobDoesNotResume(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	id := previewBatch(t, s)
+	cfg := l.config
+	l.scanMu.Lock()
+	startBatchTest(t, l, s, id, "quarantine")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/duplicates/batch-cancel", strings.NewReader(fmt.Sprintf(`{"id":%q}`, id)))
+	r.Header.Set("X-Home-Images", "1")
+	s.Config.Handler.ServeHTTP(w, r)
+	if w.Code != 200 {
+		l.scanMu.Unlock()
+		t.Fatal(w.Code, w.Body.String())
+	}
+	l.scanMu.Unlock()
+	waitBatch(t, l, id)
+	l.Close()
+	reopened, err := newLibrary(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var state string
+	if err = reopened.db.QueryRow("SELECT state FROM duplicate_batches WHERE id=?", id).Scan(&state); err != nil || state != "cancelled" {
+		t.Fatalf("state %q: %v", state, err)
+	}
+}
+
+func TestCleanupRejectsOverlappingActiveJob(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	first, second := previewBatch(t, s), previewBatch(t, s)
+	l.scanMu.Lock()
+	defer l.scanMu.Unlock()
+	startBatchTest(t, l, s, first, "quarantine")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/duplicates/batch-start", strings.NewReader(fmt.Sprintf(`{"id":%q,"action":"quarantine"}`, second)))
+	r.Header.Set("X-Home-Images", "1")
+	s.Config.Handler.ServeHTTP(w, r)
+	if w.Code != 409 {
+		t.Fatalf("expected overlapping job rejection, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCleanupJobListIncludesProgress(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	id := previewBatch(t, s)
+	if _, err := l.db.Exec("UPDATE duplicate_batches SET state='cancelled' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.db.Exec("UPDATE duplicate_batch_items SET state='done' WHERE batch_id=? AND sequence=0", id); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/batches", nil))
+	var result struct {
+		Items []struct {
+			Total   int `json:"total"`
+			Done    int `json:"done"`
+			Pending int `json:"pending"`
+		} `json:"items"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || len(result.Items) != 1 || result.Items[0].Total != 2 || result.Items[0].Done != 1 || result.Items[0].Pending != 1 {
+		t.Fatalf("unexpected job list: %d %s", w.Code, w.Body.String())
 	}
 }

@@ -164,6 +164,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 	// Gather bounded planner statistics after schema changes, before the reader
 	// pools prepare their first queries. Maintenance is best effort.
 	l.optimizeDatabases(context.Background())
+	if err = l.resumeInterruptedTrashJobs(); err != nil {
+		l.Close()
+		return nil, err
+	}
 	return l, nil
 }
 

@@ -19,7 +19,10 @@ import (
 func (l *Library) ensureDuplicateBatchSchema() error {
 	_, err := l.db.Exec(`CREATE TABLE IF NOT EXISTS duplicate_batches(id TEXT PRIMARY KEY,action TEXT NOT NULL,state TEXT NOT NULL,summary TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS duplicate_batch_items(batch_id TEXT NOT NULL,sequence INTEGER NOT NULL,remove_id TEXT NOT NULL,keep_id TEXT NOT NULL,file_hash TEXT NOT NULL,remove_path TEXT NOT NULL,keep_path TEXT NOT NULL,size_bytes INTEGER NOT NULL,token TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'pending',error TEXT NOT NULL DEFAULT '',PRIMARY KEY(batch_id,sequence));
- UPDATE duplicate_batches SET state='interrupted' WHERE state IN('running','cancelling');`)
+ CREATE INDEX IF NOT EXISTS duplicate_batch_remove ON duplicate_batch_items(batch_id,remove_id,state);
+ CREATE INDEX IF NOT EXISTS duplicate_batch_keep ON duplicate_batch_items(batch_id,keep_id,state);
+ UPDATE duplicate_batches SET state='interrupted' WHERE state='running';
+ UPDATE duplicate_batches SET state='cancelled' WHERE state='cancelling';`)
 	return err
 }
 func batchID() (string, error) {
@@ -48,7 +51,7 @@ func (l *Library) previewDirectoryCleanup(w http.ResponseWriter, r *http.Request
 		return err
 	}
 	if len(plan.Items) == 0 {
-		return bad(400, "There are no exact duplicates to quarantine between these trees")
+		return bad(400, "There are no exact duplicates to move to Trash between these trees")
 	}
 	id, err := batchID()
 	if err != nil {
@@ -146,7 +149,14 @@ func (l *Library) duplicateBatchStatus(w http.ResponseWriter, r *http.Request) e
 	return writeJSON(w, 200, map[string]any{"id": id, "action": action, "state": state, "summary": summary, "trash_count": trashCount, "counts": counts, "total": total, "completed_bytes": bytes, "errors": errors, "created_at": created, "updated_at": updated})
 }
 func (l *Library) duplicateBatchList(w http.ResponseWriter, r *http.Request) error {
-	rows, err := l.read.QueryContext(r.Context(), "SELECT id,action,state,summary,created_at FROM duplicate_batches WHERE state!='preview' ORDER BY created_at DESC LIMIT 30")
+	rows, err := l.read.QueryContext(r.Context(), `SELECT id,action,state,summary,created_at,
+ (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id),
+ (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='done'),
+ (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='error'),
+ (SELECT coalesce(sum(size_bytes),0) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='done'),
+ (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='pending'),
+ (SELECT count(*) FROM duplicate_batch_items i JOIN duplicate_quarantine q ON q.token=i.token WHERE i.batch_id=duplicate_batches.id AND i.state='done')
+ FROM duplicate_batches WHERE state!='preview' ORDER BY created_at DESC LIMIT 30`)
 	if err != nil {
 		return err
 	}
@@ -154,14 +164,16 @@ func (l *Library) duplicateBatchList(w http.ResponseWriter, r *http.Request) err
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, action, state, raw, created string
-		if err = rows.Scan(&id, &action, &state, &raw, &created); err != nil {
+		var total, done, failed, pending, trashCount int
+		var completedBytes int64
+		if err = rows.Scan(&id, &action, &state, &raw, &created, &total, &done, &failed, &completedBytes, &pending, &trashCount); err != nil {
 			return err
 		}
 		var summary any
 		if err = json.Unmarshal([]byte(raw), &summary); err != nil {
 			return err
 		}
-		items = append(items, map[string]any{"id": id, "action": action, "state": state, "summary": summary, "created_at": created})
+		items = append(items, map[string]any{"id": id, "action": action, "state": state, "summary": summary, "created_at": created, "total": total, "done": done, "failed": failed, "completed_bytes": completedBytes, "pending": pending, "trash_count": trashCount})
 	}
 	if err = rows.Err(); err != nil {
 		return err
@@ -191,7 +203,7 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	id := body.ID
 	if body.Action == "restore" || body.Action == "purge" {
 		if action != "quarantine" || state == "preview" || state == "running" {
-			return bad(409, "Choose a finished or cancelled quarantine job")
+			return bad(409, "Choose a finished or cancelled Trash job")
 		}
 		var err error
 		id, err = batchID()
@@ -216,7 +228,7 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 			return err
 		}
 		if n == 0 {
-			return bad(400, "This job has no quarantined copies")
+			return bad(400, "This job has no copies in Trash")
 		}
 		if err = tx.Commit(); err != nil {
 			return err
@@ -229,11 +241,20 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	// Jobs sharing any source or retained file must not race each other.
 	var conflicts int
 	if err := l.db.QueryRowContext(r.Context(), `SELECT EXISTS(
-		SELECT 1 FROM duplicate_batch_items a JOIN duplicate_batch_items b
-		ON (a.remove_id=b.remove_id OR a.remove_id=b.keep_id OR a.keep_id=b.remove_id)
-		JOIN duplicate_batches active ON active.id=b.batch_id
-		WHERE a.batch_id=? AND b.batch_id!=? AND active.state IN ('running','cancelling')
-		AND a.state IN ('pending','error') AND b.state='pending')`, id, id).Scan(&conflicts); err != nil {
+        SELECT 1 FROM duplicate_batches active
+        CROSS JOIN duplicate_batch_items b ON b.batch_id=active.id AND b.state='pending'
+        CROSS JOIN duplicate_batch_items a INDEXED BY duplicate_batch_remove ON a.batch_id=? AND a.remove_id=b.remove_id AND a.state IN ('pending','error')
+        WHERE active.id!=? AND active.state IN ('running','cancelling')
+        UNION ALL
+        SELECT 1 FROM duplicate_batches active
+        CROSS JOIN duplicate_batch_items b ON b.batch_id=active.id AND b.state='pending'
+        CROSS JOIN duplicate_batch_items a INDEXED BY duplicate_batch_remove ON a.batch_id=? AND a.remove_id=b.keep_id AND a.state IN ('pending','error')
+        WHERE active.id!=? AND active.state IN ('running','cancelling')
+        UNION ALL
+        SELECT 1 FROM duplicate_batches active
+        CROSS JOIN duplicate_batch_items b ON b.batch_id=active.id AND b.state='pending'
+        CROSS JOIN duplicate_batch_items a INDEXED BY duplicate_batch_keep ON a.batch_id=? AND a.keep_id=b.remove_id AND a.state IN ('pending','error')
+        WHERE active.id!=? AND active.state IN ('running','cancelling'))`, id, id, id, id, id, id).Scan(&conflicts); err != nil {
 		return err
 	}
 	if conflicts != 0 {
@@ -248,6 +269,12 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	if _, err := l.db.ExecContext(r.Context(), "UPDATE duplicate_batches SET state='running',updated_at=? WHERE id=?", time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
 		return err
 	}
+	l.launchDuplicateBatch(id, action)
+	return writeJSON(w, 200, map[string]any{"id": id})
+}
+
+// launchDuplicateBatch requires duplicateJobMu to be held.
+func (l *Library) launchDuplicateBatch(id, action string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if l.duplicateJobs == nil {
 		l.duplicateJobs = make(map[string]context.CancelFunc)
@@ -255,7 +282,6 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	l.duplicateJobs[id] = cancel
 	l.duplicateJobWG.Add(1)
 	go l.runDuplicateBatch(ctx, id, action)
-	return writeJSON(w, 200, map[string]any{"id": id})
 }
 func (l *Library) cancelDuplicateBatch(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
@@ -267,6 +293,9 @@ func (l *Library) cancelDuplicateBatch(w http.ResponseWriter, r *http.Request) e
 	l.duplicateJobMu.Lock()
 	defer l.duplicateJobMu.Unlock()
 	if cancel := l.duplicateJobs[body.ID]; cancel != nil {
+		if _, err := l.db.ExecContext(r.Context(), "UPDATE duplicate_batches SET state='cancelling' WHERE id=?", body.ID); err != nil {
+			return err
+		}
 		cancel()
 	}
 	return writeJSON(w, 200, map[string]any{"ok": true})
@@ -296,6 +325,13 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 		}
 		if ctx.Err() != nil {
 			state = "cancelled"
+			l.duplicateJobMu.Lock()
+			closing := l.duplicateClosing
+			l.duplicateJobMu.Unlock()
+			var stored string
+			if closing && action == "quarantine" && l.db.QueryRow("SELECT state FROM duplicate_batches WHERE id=?", id).Scan(&stored) == nil && stored != "cancelling" {
+				state = "interrupted"
+			}
 		}
 		_, _ = l.db.Exec("UPDATE duplicate_batches SET state=?,updated_at=? WHERE id=?", state, time.Now().UTC().Format(time.RFC3339Nano), id)
 	}()
@@ -379,3 +415,35 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 	}
 }
 func ioBody(s string) io.ReadCloser { return io.NopCloser(strings.NewReader(s)) }
+
+// resumeInterruptedTrashJobs restarts only work interrupted by shutdown or a crash.
+func (l *Library) resumeInterruptedTrashJobs() error {
+	rows, err := l.db.Query("SELECT id FROM duplicate_batches WHERE action='quarantine' AND state='interrupted' ORDER BY created_at,id")
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	l.duplicateJobMu.Lock()
+	defer l.duplicateJobMu.Unlock()
+	for _, id := range ids {
+		if _, err = l.db.Exec("UPDATE duplicate_batches SET state='running',updated_at=? WHERE id=? AND state='interrupted'", time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
+			return err
+		}
+		l.launchDuplicateBatch(id, "quarantine")
+	}
+	return nil
+}

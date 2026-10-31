@@ -45,7 +45,7 @@ func cleanOverlapDir(dir string) (string, error) {
 		return "", nil
 	}
 	if strings.HasPrefix(dir, ".homeimages-quarantine") {
-		return "", bad(400, "Quarantine cannot be selected")
+		return "", bad(400, "Trash cannot be selected")
 	}
 	return dir, nil
 }
