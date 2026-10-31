@@ -45,15 +45,14 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
-	overlapMu          sync.Mutex
-	overlapCache       *cachedDirectoryOverlaps
-	duplicateJobMu     sync.Mutex
-	duplicateJobCancel context.CancelFunc
-	duplicateJobID     string
-	duplicateJobWG     sync.WaitGroup
-	duplicateClosing   bool
-	backup             *phoneBackup
-	faceCrop           *faceCrop // immutable, set only in an isolated preview worker
+	overlapMu        sync.Mutex
+	overlapCache     *cachedDirectoryOverlaps
+	duplicateJobMu   sync.Mutex
+	duplicateJobs    map[string]context.CancelFunc
+	duplicateJobWG   sync.WaitGroup
+	duplicateClosing bool
+	backup           *phoneBackup
+	faceCrop         *faceCrop // immutable, set only in an isolated preview worker
 
 	config           Config
 	rootPath         string
@@ -63,6 +62,7 @@ type Library struct {
 	mu               sync.RWMutex
 	status           scanStatus
 	scanMu           sync.Mutex
+	scanRunMu        sync.Mutex
 	renderSlots      *renderQueue
 	thumbnails       *thumbnailCache
 	previewDecoder   chan struct{}
@@ -181,8 +181,8 @@ func (l *Library) optimizeDatabases(ctx context.Context) {
 func (l *Library) Close() {
 	l.duplicateJobMu.Lock()
 	l.duplicateClosing = true
-	if l.duplicateJobCancel != nil {
-		l.duplicateJobCancel()
+	for _, cancel := range l.duplicateJobs {
+		cancel()
 	}
 	l.duplicateJobMu.Unlock()
 	l.duplicateJobWG.Wait()
@@ -319,10 +319,10 @@ func isHEIC(path string) bool {
 }
 
 func (l *Library) Scan(ctx context.Context) {
-	if !l.scanMu.TryLock() {
+	if !l.scanRunMu.TryLock() {
 		return
 	}
-	defer l.scanMu.Unlock()
+	defer l.scanRunMu.Unlock()
 	l.scanLocked(ctx)
 }
 
@@ -376,6 +376,15 @@ func (l *Library) scanLocked(ctx context.Context) {
 		if d.IsDir() || !supported(path) {
 			return nil
 		}
+		l.scanMu.Lock()
+		defer l.scanMu.Unlock()
+		// Recheck under the mutation lock: cleanup may have moved this entry.
+		if _, err := l.root.Lstat(filepath.FromSlash(path)); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			complete = false
+			return nil
+		}
 		seen[path] = true
 		// Directory entries on Windows already contain size and modification time.
 		info, err := d.Info()
@@ -407,7 +416,15 @@ func (l *Library) scanLocked(ctx context.Context) {
 			if seen[p] {
 				continue
 			}
-			if err = l.retirePath(ctx, p); err != nil {
+			l.scanMu.Lock()
+			_, statErr := l.root.Lstat(filepath.FromSlash(p))
+			if errors.Is(statErr, os.ErrNotExist) {
+				err = l.retirePath(ctx, p)
+			} else {
+				err = statErr
+			}
+			l.scanMu.Unlock()
+			if err != nil {
 				l.scanError(err)
 				return
 			}

@@ -46,8 +46,8 @@ func (l *Library) watchChanges(ctx context.Context) {
 			case scanRunning <- struct{}{}:
 				go func() {
 					defer func() { <-scanRunning }()
-					l.scanMu.Lock()
-					defer l.scanMu.Unlock()
+					l.scanRunMu.Lock()
+					defer l.scanRunMu.Unlock()
 					if ctx.Err() == nil {
 						l.scanLocked(ctx)
 					}

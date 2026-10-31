@@ -181,11 +181,8 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	if l.duplicateClosing {
 		return bad(503, "Service is shutting down")
 	}
-	if l.duplicateJobCancel != nil {
-		if l.duplicateJobID == body.ID {
-			return writeJSON(w, 200, map[string]any{"id": body.ID})
-		}
-		return bad(409, "Another cleanup job is running; wait or cancel it first")
+	if _, running := l.duplicateJobs[body.ID]; running {
+		return writeJSON(w, 200, map[string]any{"id": body.ID})
 	}
 	var action, state, summary string
 	if err := l.db.QueryRowContext(r.Context(), "SELECT action,state,summary FROM duplicate_batches WHERE id=?", body.ID).Scan(&action, &state, &summary); err != nil {
@@ -229,6 +226,19 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	} else if body.Action != "" && body.Action != "resume" && body.Action != "quarantine" {
 		return bad(400, "Unknown cleanup action")
 	}
+	// Jobs sharing any source or retained file must not race each other.
+	var conflicts int
+	if err := l.db.QueryRowContext(r.Context(), `SELECT EXISTS(
+		SELECT 1 FROM duplicate_batch_items a JOIN duplicate_batch_items b
+		ON (a.remove_id=b.remove_id OR a.remove_id=b.keep_id OR a.keep_id=b.remove_id)
+		JOIN duplicate_batches active ON active.id=b.batch_id
+		WHERE a.batch_id=? AND b.batch_id!=? AND active.state IN ('running','cancelling')
+		AND a.state IN ('pending','error') AND b.state='pending')`, id, id).Scan(&conflicts); err != nil {
+		return err
+	}
+	if conflicts != 0 {
+		return bad(409, "Another cleanup job uses the same files; wait for it to finish")
+	}
 	if state != "preview" && state != "cancelled" && state != "interrupted" && state != "completed" {
 		return bad(409, "This job cannot be started")
 	}
@@ -239,8 +249,10 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	l.duplicateJobCancel = cancel
-	l.duplicateJobID = id
+	if l.duplicateJobs == nil {
+		l.duplicateJobs = make(map[string]context.CancelFunc)
+	}
+	l.duplicateJobs[id] = cancel
 	l.duplicateJobWG.Add(1)
 	go l.runDuplicateBatch(ctx, id, action)
 	return writeJSON(w, 200, map[string]any{"id": id})
@@ -254,8 +266,8 @@ func (l *Library) cancelDuplicateBatch(w http.ResponseWriter, r *http.Request) e
 	}
 	l.duplicateJobMu.Lock()
 	defer l.duplicateJobMu.Unlock()
-	if l.duplicateJobID == body.ID && l.duplicateJobCancel != nil {
-		l.duplicateJobCancel()
+	if cancel := l.duplicateJobs[body.ID]; cancel != nil {
+		cancel()
 	}
 	return writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -274,8 +286,7 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 	defer l.duplicateJobWG.Done()
 	defer func() {
 		l.duplicateJobMu.Lock()
-		l.duplicateJobCancel = nil
-		l.duplicateJobID = ""
+		delete(l.duplicateJobs, id)
 		l.duplicateJobMu.Unlock()
 	}()
 	state := "completed"

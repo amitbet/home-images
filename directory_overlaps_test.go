@@ -94,7 +94,7 @@ func waitBatch(t *testing.T, l *Library, id string) (int, int) {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		l.duplicateJobMu.Lock()
-		running := l.duplicateJobID != ""
+		_, running := l.duplicateJobs[id]
 		l.duplicateJobMu.Unlock()
 		if !running {
 			var done, failed int
@@ -291,5 +291,30 @@ func TestOverlapEndpointGroupsBothDirections(t *testing.T) {
 	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/overlaps?scope=bulk&depth=1&minimum=1&full=true", nil))
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Total != 1 {
 		t.Fatal(w.Body.String(), err)
+	}
+}
+
+func TestConcurrentCleanupJobsCancelIndependently(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	first, second := previewBatch(t, s), previewBatch(t, s)
+	if _, err := l.db.Exec("UPDATE duplicate_batch_items SET remove_id=remove_id||'-other', keep_id=keep_id||'-other' WHERE batch_id=?", second); err != nil {
+		t.Fatal(err)
+	}
+	l.scanMu.Lock()
+	startBatchTest(t, l, s, first, "quarantine")
+	startBatchTest(t, l, s, second, "quarantine")
+	l.duplicateJobMu.Lock()
+	if len(l.duplicateJobs) != 2 {
+		l.duplicateJobMu.Unlock()
+		l.scanMu.Unlock()
+		t.Fatal("both jobs should be active")
+	}
+	l.duplicateJobs[first]()
+	l.duplicateJobMu.Unlock()
+	l.scanMu.Unlock()
+	waitBatch(t, l, first)
+	done, failed := waitBatch(t, l, second)
+	if done+failed != 2 {
+		t.Fatalf("second job did not finish: %d done, %d failed", done, failed)
 	}
 }
