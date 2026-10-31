@@ -223,19 +223,19 @@ migration deliberately keeps each existing catalog record independent.
 
 ## Windows service
 
-To deploy what is on `main` to an existing install, run from the checkout. It waits for CI to publish that commit's release, then installs it
-with checksum verification and shows `/health`:
+To build the checkout and install it over an existing install, run:
 
 ```powershell
 git pull; .\scripts\deploy-windows.cmd
 ```
 
 The `.cmd` launcher bypasses the execution policy for that run only and asks
-for administrator rights when needed; you can also double-click it.
+for administrator rights when needed; you can also double-click it. It builds with
+the local Go toolchain, packages TurboJPEG with 7-Zip (or reuses the installed
+codec), runs `install-windows.ps1` and shows `/health`.
 
-To build locally instead:
-
-Build, then run the installer in an **elevated PowerShell**:
+For a first install, or to do it by hand, build, then run the installer in an
+**elevated PowerShell**:
 
 ```powershell
 go build -trimpath -ldflags '-s -w' -o dist/home-images-windows-amd64.exe .
