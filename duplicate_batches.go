@@ -21,6 +21,7 @@ func (l *Library) ensureDuplicateBatchSchema() error {
  CREATE TABLE IF NOT EXISTS duplicate_batch_items(batch_id TEXT NOT NULL,sequence INTEGER NOT NULL,remove_id TEXT NOT NULL,keep_id TEXT NOT NULL,file_hash TEXT NOT NULL,remove_path TEXT NOT NULL,keep_path TEXT NOT NULL,size_bytes INTEGER NOT NULL,token TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'pending',error TEXT NOT NULL DEFAULT '',PRIMARY KEY(batch_id,sequence));
  CREATE INDEX IF NOT EXISTS duplicate_batch_remove ON duplicate_batch_items(batch_id,remove_id,state);
  CREATE INDEX IF NOT EXISTS duplicate_batch_keep ON duplicate_batch_items(batch_id,keep_id,state);
+ CREATE INDEX IF NOT EXISTS duplicate_batch_token ON duplicate_batch_items(token);
  UPDATE duplicate_batches SET state='interrupted' WHERE state='running';
  UPDATE duplicate_batches SET state='cancelled' WHERE state='cancelling';`)
 	return err
