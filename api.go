@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -78,6 +79,7 @@ func (l *Library) Handler() http.Handler {
 	mux.HandleFunc("/api/images/{id}/image", wrap(l.render))
 	mux.HandleFunc("/api/images/{id}/thumbnail", wrap(l.thumbnail))
 	mux.HandleFunc("/api/images/{id}/original", wrap(l.original))
+	mux.HandleFunc("/api/images/{id}/video", wrap(l.videoPlayback))
 	mux.HandleFunc("/docs", wrap(func(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, err := fmt.Fprint(w, apiDocs)
@@ -362,7 +364,12 @@ func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%d:%d:%d:%d:%d", p.ID, info.ModTime().UnixNano(), info.Size(), width, height, quality))
+	variant := ""
+	if isVideo(p.Path) {
+		_, ffmpegErr := exec.LookPath(l.config.FFmpeg)
+		variant = fmt.Sprintf("video-frame-v1:%t", ffmpegErr == nil)
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s:%d:%d:%d:%d:%d:%s", p.ID, info.ModTime().UnixNano(), info.Size(), width, height, quality, variant))
 	etag := fmt.Sprintf(`"%x"`, sum)
 	if r.Header.Get("If-None-Match") == etag {
 		w.Header().Set("ETag", etag)

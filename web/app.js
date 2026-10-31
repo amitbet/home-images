@@ -1536,11 +1536,23 @@ async function openImage(i, external = null) {
   $("fullImage").alt = a.title || displayFilename(photo.filename);
   modal("viewer");
   const video = $("fullVideo"), isVideo = photo.format === "VIDEO";
-  video.pause(); video.removeAttribute("src"); video.load();
+  video.onerror = video.onloadedmetadata = null; video.pause(); video.removeAttribute("src"); video.load();
   video.hidden = !isVideo; $("fullImage").hidden = isVideo;
   if (isVideo) {
     if (state.playing) stopPlay();
     clearViewerPreview();
+    let converted = false;
+    const convertVideo = () => {
+      if (gen !== state.viewerGeneration || !$("viewer").open) return;
+      if (converted) { toast("Video playback failed. Install FFmpeg with H.264 support or open the original."); return; }
+      converted = true;
+      toast("Preparing a compatible video stream…");
+      video.src = "/api/images/" + photo.id + "/video";
+      video.load();
+      video.play().catch(() => {});
+    };
+    video.onerror = convertVideo;
+    video.onloadedmetadata = () => { if (!converted && !video.videoWidth) convertVideo(); };
     video.src = photo.original_url;
     video.load();
     preloadNext(photo, gen, external);
@@ -1971,7 +1983,7 @@ async function advance(direction, auto = false) {
 }
 $("viewer").addEventListener("close", () => {
   state.viewerGeneration++;
-  $("fullVideo").pause(); $("fullVideo").removeAttribute("src"); $("fullVideo").load();
+  $("fullVideo").onerror = $("fullVideo").onloadedmetadata = null; $("fullVideo").pause(); $("fullVideo").removeAttribute("src"); $("fullVideo").load();
   clearViewerPreview();
   pumpThumbnails();
   const display = $("fullImage");

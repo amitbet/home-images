@@ -216,6 +216,21 @@ func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, qualit
 		return nil, bad(422, "Image cannot be decoded")
 	}
 	if isVideo(p.Path) {
+		if ffmpeg, e := exec.LookPath(l.config.FFmpeg); e == nil {
+			frameCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			scale := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease", width, height)
+			cmd := exec.CommandContext(frameCtx, ffmpeg, "-nostdin", "-v", "error", "-threads", "1", "-filter_threads", "1", "-i", fresh.AbsolutePath, "-map", "0:v:0", "-frames:v", "1", "-vf", scale, "-map_metadata", "-1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", fmt.Sprint(2+(95-quality)*29/55), "pipe:1")
+			var out limitedBuffer
+			out.max = 32 << 20
+			cmd.Stdout = &out
+			if cmd.Run() == nil && out.Len() > 0 {
+				return out.Bytes(), nil
+			}
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return videoThumbnail(width, height, quality)
 	}
 	if isHEIC(p.Path) {

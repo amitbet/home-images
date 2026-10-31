@@ -16,7 +16,7 @@ Features:
 - Embedded photo browser with content search and editable named face groups.
 - Optional Android backups through a managed Syncthing receiver and Syncthing-Fork QR pairing.
 - Optional remote Immich ML inference; no Docker or ML runtime required on this server.
-- Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews. Browse and play MP4, M4V, MOV, WebM, and OGV videos in the UI when their codecs are supported by the browser; video thumbnails use a placeholder. Use the Type filter to show images, videos, or both. Content search indexes images only; use Files & metadata to search videos. Picture-frame playback remains photo-only.
+- Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews. Browse and play MP4, M4V, MOV, WebM, and OGV videos in the UI. Videos unsupported by the browser can be converted on demand with FFmpeg and its libx264 encoder; converted streams may not support seeking. Video thumbnails show a frame when FFmpeg is available, with a placeholder if extraction fails. Use the Type filter to show images, videos, or both. Content search indexes images only; use Files & metadata to search videos. Picture-frame playback remains photo-only.
 - Bounded rendering concurrency/pixel counts, root-confined file handles, graceful shutdown, and rotating logs.
 
 ## Android phone backup

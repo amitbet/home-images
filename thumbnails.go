@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,6 +52,10 @@ func (l *Library) previewKey(p Photo, variant string) (string, error) {
 	f.Close()
 	if err != nil {
 		return "", err
+	}
+	if isVideo(p.Path) {
+		_, err := exec.LookPath(l.config.FFmpeg)
+		variant += fmt.Sprintf(":video-frame-v1:ffmpeg=%t", err == nil)
 	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "v1|%s|%s|%d|%d|%s", l.rootPath, p.Path, info.ModTime().UnixNano(), info.Size(), variant))
 	return hex.EncodeToString(sum[:]), nil
