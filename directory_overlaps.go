@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path"
@@ -340,4 +341,64 @@ func (l *Library) cachedDirectoryOverlaps(ctx context.Context, scope string, dep
 	}
 	l.overlapCache = &cachedDirectoryOverlaps{scope, depth, revision, time.Now().Add(45 * time.Second), pairs, dirs}
 	return pairs, dirs, nil
+}
+
+// directoryVariants returns file pairs with the same image-data identity but
+// different full-file hashes. Each pair is inspectable; none is deleted.
+func (l *Library) directoryVariants(w http.ResponseWriter, r *http.Request) error {
+	a, err := cleanOverlapDir(r.URL.Query().Get("a"))
+	if err != nil {
+		return err
+	}
+	b, err := cleanOverlapDir(r.URL.Query().Get("b"))
+	if err != nil {
+		return err
+	}
+	if !disjointDirectories(a, b) {
+		return bad(400, "Choose separate directory trees")
+	}
+	offset, err := intParam(r, "offset", 0, 0, 1000000)
+	if err != nil {
+		return err
+	}
+	const limit = 20
+	rows, err := l.read.QueryContext(r.Context(), `SELECT a.id,a.path,a.size_bytes,metadata_json(a.metadata),b.id,b.path,b.size_bytes,metadata_json(b.metadata)
+ FROM images a JOIN images b ON b.content_id=a.content_id AND b.hash_signature=b.signature
+ WHERE a.path>=? COLLATE BINARY AND a.path<? COLLATE BINARY AND b.path>=? COLLATE BINARY AND b.path<? COLLATE BINARY
+ AND a.hash_signature=a.signature AND a.content_id IS NOT NULL AND a.file_hash IS NOT NULL AND b.file_hash IS NOT NULL AND a.file_hash!=b.file_hash
+ ORDER BY a.path,b.path LIMIT ? OFFSET ?`, a+"/", a+"0", b+"/", b+"0", limit+1, offset)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type pair struct {
+		First  Photo `json:"first"`
+		Second Photo `json:"second"`
+	}
+	items := []pair{}
+	for rows.Next() {
+		var aid, ap, bid, bp, am, bm string
+		var as, bs int64
+		if err = rows.Scan(&aid, &ap, &as, &am, &bid, &bp, &bs, &bm); err != nil {
+			return err
+		}
+		var p pair
+		if err = json.Unmarshal([]byte(am), &p.First); err != nil {
+			return err
+		}
+		if err = json.Unmarshal([]byte(bm), &p.Second); err != nil {
+			return err
+		}
+		p.First.ID, p.First.Path, p.First.Size = aid, ap, as
+		p.Second.ID, p.Second.Path, p.Second.Size = bid, bp, bs
+		items = append(items, p)
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	return writeJSON(w, 200, map[string]any{"items": items, "more": more})
 }

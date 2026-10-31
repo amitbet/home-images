@@ -51,6 +51,7 @@ func (l *Library) Handler() http.Handler {
 		}
 	}
 	mux.HandleFunc("GET /api/duplicates/overlaps", wrap(l.directoryOverlaps))
+	mux.HandleFunc("GET /api/duplicates/variants", wrap(l.directoryVariants))
 	mux.HandleFunc("/api/duplicates/plan", l.ai.mutation(l.previewDirectoryCleanup))
 	mux.HandleFunc("GET /api/duplicates/batches", wrap(l.duplicateBatchList))
 	mux.HandleFunc("GET /api/duplicates/batches/{batch}", wrap(l.duplicateBatchStatus))

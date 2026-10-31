@@ -170,7 +170,11 @@ func (l *Library) quarantinePairExpected(r *http.Request, keepID, removeID, expe
 	return map[string]any{"ok": true, "token": token, "kept": keep.Path, "quarantined": remove.Path}, nil
 }
 func (l *Library) quarantineList(w http.ResponseWriter, r *http.Request) error {
-	rows, err := l.read.QueryContext(r.Context(), "SELECT token,path,quarantine_path,created_at FROM duplicate_quarantine ORDER BY created_at DESC")
+	query := "SELECT token,path,quarantine_path,created_at FROM duplicate_quarantine q"
+	if r.URL.Query().Get("ungrouped") == "1" {
+		query += " WHERE NOT EXISTS (SELECT 1 FROM duplicate_batch_items i JOIN duplicate_batches b ON b.id=i.batch_id AND b.action='quarantine' WHERE i.token=q.token AND i.state='done')"
+	}
+	rows, err := l.read.QueryContext(r.Context(), query+" ORDER BY created_at DESC")
 	if err != nil {
 		return err
 	}

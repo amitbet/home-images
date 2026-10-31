@@ -407,3 +407,93 @@ func TestCleanupJobListIncludesProgress(t *testing.T) {
 		t.Fatalf("unexpected job list: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestTrashGroupsAndIndividualFilesRemainUntilRestored(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	id := previewBatch(t, s)
+	startBatchTest(t, l, s, id, "quarantine")
+	if done, failed := waitBatch(t, l, id); done != 2 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	var keep, remove string
+	if err := l.db.QueryRow("SELECT id FROM images WHERE path='bulk/B/copy.jpg'").Scan(&keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.db.QueryRow("SELECT id FROM images WHERE path='bulk/B/sub/copy2.jpg'").Scan(&remove); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/", nil)
+	if _, err := l.quarantinePair(r, keep, remove); err != nil {
+		t.Fatal(err)
+	}
+	get := func(url string) map[string]json.RawMessage {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		var out map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	var groups []struct {
+		ID    string `json:"id"`
+		Count int    `json:"trash_count"`
+	}
+	if err := json.Unmarshal(get("/api/duplicates/batches?view=trash")["items"], &groups); err != nil || len(groups) != 1 || groups[0].ID != id || groups[0].Count != 2 {
+		t.Fatalf("groups: %+v %v", groups, err)
+	}
+	var singles []struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(get("/api/duplicates/quarantine?ungrouped=1")["items"], &singles); err != nil || len(singles) != 1 {
+		t.Fatalf("singles: %+v %v", singles, err)
+	}
+	var tasks []json.RawMessage
+	if err := json.Unmarshal(get("/api/duplicates/batches?view=tasks")["items"], &tasks); err != nil || len(tasks) != 0 {
+		t.Fatalf("tasks: %+v %v", tasks, err)
+	}
+	if code := postTest(t, s, "/api/duplicates/restore", fmt.Sprintf(`{"token":%q}`, singles[0].Token)); code != 200 {
+		t.Fatal(code)
+	}
+	if err := json.Unmarshal(get("/api/duplicates/quarantine?ungrouped=1")["items"], &singles); err != nil || len(singles) != 0 {
+		t.Fatalf("restored single remains: %+v %v", singles, err)
+	}
+	if err := json.Unmarshal(get("/api/duplicates/batches?view=trash")["items"], &groups); err != nil || len(groups) != 1 || groups[0].Count != 2 {
+		t.Fatalf("group changed: %+v %v", groups, err)
+	}
+}
+
+func TestDirectoryVariantsShowDifferentFilesWithSameImageData(t *testing.T) {
+	_, s, _ := bulkFixture(t)
+	w := httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/variants?a=bulk%2FA&b=bulk%2FB", nil))
+	var result struct {
+		Items []struct {
+			First  Photo `json:"first"`
+			Second Photo `json:"second"`
+		} `json:"items"`
+	}
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected variant matched to each copy: %s", w.Body.String())
+	}
+	for _, pair := range result.Items {
+		if pair.First.Path != "bulk/A/variant.jpg" || pair.First.Size == pair.Second.Size {
+			t.Fatalf("unexpected pair: %+v", pair)
+		}
+	}
+	w = httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/variants?a=bulk&b=bulk%2FB", nil))
+	if w.Code != 400 {
+		t.Fatalf("nested folders accepted: %d", w.Code)
+	}
+}

@@ -149,6 +149,12 @@ func (l *Library) duplicateBatchStatus(w http.ResponseWriter, r *http.Request) e
 	return writeJSON(w, 200, map[string]any{"id": id, "action": action, "state": state, "summary": summary, "trash_count": trashCount, "counts": counts, "total": total, "completed_bytes": bytes, "errors": errors, "created_at": created, "updated_at": updated})
 }
 func (l *Library) duplicateBatchList(w http.ResponseWriter, r *http.Request) error {
+	filter := "state!='preview'"
+	if r.URL.Query().Get("view") == "trash" {
+		filter = "action='quarantine' AND EXISTS (SELECT 1 FROM duplicate_batch_items i JOIN duplicate_quarantine q ON q.token=i.token WHERE i.batch_id=duplicate_batches.id AND i.state='done')"
+	} else if r.URL.Query().Get("view") == "tasks" {
+		filter = "state IN ('running','cancelling') OR (state IN ('completed','cancelled','interrupted') AND EXISTS (SELECT 1 FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state IN ('error','pending')))"
+	}
 	rows, err := l.read.QueryContext(r.Context(), `SELECT id,action,state,summary,created_at,
  (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id),
  (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='done'),
@@ -156,7 +162,7 @@ func (l *Library) duplicateBatchList(w http.ResponseWriter, r *http.Request) err
  (SELECT coalesce(sum(size_bytes),0) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='done'),
  (SELECT count(*) FROM duplicate_batch_items i WHERE i.batch_id=duplicate_batches.id AND i.state='pending'),
  (SELECT count(*) FROM duplicate_batch_items i JOIN duplicate_quarantine q ON q.token=i.token WHERE i.batch_id=duplicate_batches.id AND i.state='done')
- FROM duplicate_batches WHERE state!='preview' ORDER BY created_at DESC LIMIT 30`)
+ FROM duplicate_batches WHERE `+filter+` ORDER BY created_at DESC`)
 	if err != nil {
 		return err
 	}
@@ -202,7 +208,7 @@ func (l *Library) startDuplicateBatch(w http.ResponseWriter, r *http.Request) er
 	}
 	id := body.ID
 	if body.Action == "restore" || body.Action == "purge" {
-		if action != "quarantine" || state == "preview" || state == "running" {
+		if action != "quarantine" || state == "preview" || state == "running" || state == "cancelling" {
 			return bad(409, "Choose a finished or cancelled Trash job")
 		}
 		var err error
