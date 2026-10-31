@@ -187,7 +187,7 @@ func (a *AI) setError(err error) {
 func (a *AI) waitIndexing(ctx context.Context, foreground bool) bool {
 	start := time.Now()
 	defer func() { a.pipeline.waitUS.Add(time.Since(start).Microseconds()) }()
-	for a.paused.Load() || (foreground && (len(a.lib.renderSlots) > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 200*time.Millisecond)) {
+	for a.paused.Load() || (foreground && (a.lib.renderSlots.active() > 0 || time.Since(time.Unix(0, a.lib.lastRender.Load())) < 200*time.Millisecond)) {
 		if !waitContext(ctx, 50*time.Millisecond) {
 			return false
 		}

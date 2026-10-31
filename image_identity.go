@@ -176,7 +176,7 @@ func (l *Library) hashIdentityBatch(ctx context.Context) (int, error) {
 		return 0, rowErr
 	}
 	for _, j := range jobs {
-		for len(l.renderSlots) > 0 || time.Since(time.Unix(0, l.lastRender.Load())) < 200*time.Millisecond {
+		for l.renderSlots.active() > 0 || time.Since(time.Unix(0, l.lastRender.Load())) < 200*time.Millisecond {
 			if !waitContext(ctx, 100*time.Millisecond) {
 				return 0, ctx.Err()
 			}
@@ -252,7 +252,7 @@ type identityBackgroundReader struct {
 }
 
 func (r *identityBackgroundReader) Read(p []byte) (int, error) {
-	for len(r.lib.renderSlots) > 0 || time.Since(time.Unix(0, r.lib.lastRender.Load())) < 200*time.Millisecond {
+	for r.lib.renderSlots.active() > 0 || time.Since(time.Unix(0, r.lib.lastRender.Load())) < 200*time.Millisecond {
 		if !waitContext(r.ctx, 50*time.Millisecond) {
 			return 0, r.ctx.Err()
 		}

@@ -47,6 +47,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Viewer regression tests
+        run: node --test scripts/viewer-regression.test.js
       - uses: actions/setup-python@v5
         if: runner.os != 'Windows'
         with:

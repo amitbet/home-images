@@ -63,7 +63,7 @@ type Library struct {
 	mu               sync.RWMutex
 	status           scanStatus
 	scanMu           sync.Mutex
-	renderSlots      chan struct{}
+	renderSlots      *renderQueue
 	thumbnails       *thumbnailCache
 	previewDecoder   chan struct{}
 	isolateRendering bool
@@ -91,7 +91,7 @@ func newLibrary(c Config) (*Library, error) {
 	db := openSQLite(filepath.Join(c.DataDir, "index-go.sqlite3"), map[string]string{
 		"curation": filepath.Join(c.DataDir, "curation.sqlite3"),
 	}, false)
-	l := &Library{config: c, rootPath: rootPath, root: r, db: db, renderSlots: make(chan struct{}, 2), thumbnails: newThumbnailCache(c.DataDir), previewDecoder: make(chan struct{}, 1)}
+	l := &Library{config: c, rootPath: rootPath, root: r, db: db, renderSlots: newRenderQueue(2), thumbnails: newThumbnailCache(c.DataDir), previewDecoder: make(chan struct{}, 1)}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;
 CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,path TEXT UNIQUE NOT NULL,directory TEXT NOT NULL,signature TEXT NOT NULL,metadata TEXT NOT NULL,search TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS image_path ON images(path COLLATE NOCASE);

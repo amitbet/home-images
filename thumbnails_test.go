@@ -36,7 +36,11 @@ func TestThumbnailCacheSingleFlightAndPersistence(t *testing.T) {
 	key := strings.Repeat("a", 64)
 	data := testJPEG(t, 64, 48)
 	var builds atomic.Int32
-	build := func() ([]byte, error) { builds.Add(1); time.Sleep(20 * time.Millisecond); return data, nil }
+	build := func(context.Context) ([]byte, error) {
+		builds.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		return data, nil
+	}
 	var wg sync.WaitGroup
 	failures := make(chan error, 16)
 	for range 16 {
@@ -252,12 +256,15 @@ func TestViewerPreviewCacheAndInvalidation(t *testing.T) {
 		t.Fatal("viewer preview not cached")
 	}
 	// A cache hit must not need a decoder/render slot.
-	l.renderSlots = make(chan struct{}, 1)
-	l.renderSlots <- struct{}{}
+	l.renderSlots = newRenderQueue(1)
+	release, err := l.renderSlots.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	second, err := l.jpeg(ctx, p, 1920, 1440, 85)
-	<-l.renderSlots
+	release()
 	if err != nil || !bytes.Equal(first, second) {
 		t.Fatal("cached viewer used renderer", err)
 	}
@@ -317,5 +324,34 @@ func TestViewerPreviewVariantCached(t *testing.T) {
 	again, e := l.jpeg(ctx, p, 1280, 1280, 80)
 	if e != nil || !bytes.Equal(data, again) {
 		t.Fatal("viewer cache not reused", e)
+	}
+}
+
+func TestSquareViewerVariantsShareCacheAcrossPriorities(t *testing.T) {
+	l, _, _ := fixture(t)
+	p, err := l.get(context.Background(), imageID("a.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, side := range []int{1280, 1920, 2560} {
+		ctx := renderContext(renderPrefetch)
+		first, err := l.jpeg(ctx, p, side, side, 80)
+		if err != nil {
+			t.Fatal(err)
+		}
+		queue := l.renderSlots
+		l.renderSlots = newRenderQueue(1)
+		release, err := l.renderSlots.acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(renderContext(renderViewer), 100*time.Millisecond)
+		second, err := l.jpeg(ctx, p, side, side, 80)
+		cancel()
+		release()
+		l.renderSlots = queue
+		if err != nil || !bytes.Equal(first, second) {
+			t.Fatalf("%dpx preview did not reuse prefetch cache: %v", side, err)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -317,6 +318,14 @@ func (l *Library) original(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
+	priority := renderNormal
+	switch r.URL.Query().Get("priority") {
+	case "viewer":
+		priority = renderViewer
+	case "prefetch":
+		priority = renderPrefetch
+	}
+	r = r.WithContext(context.WithValue(r.Context(), renderPriorityKey{}, priority))
 	width, err := intParam(r, "width", 1280, 32, 2560)
 	if err != nil {
 		return err

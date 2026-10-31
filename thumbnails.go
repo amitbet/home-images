@@ -26,9 +26,10 @@ const thumbnailWidth, thumbnailHeight, thumbnailQuality = 480, 360, 72
 const thumbnailBudget = int64(4 << 30)
 
 type thumbnailFlight struct {
-	done chan struct{}
-	data []byte
-	err  error
+	done   chan struct{}
+	demand *renderDemand
+	data   []byte
+	err    error
 }
 type thumbnailCache struct {
 	root      string
@@ -108,7 +109,7 @@ func (c *thumbnailCache) store(key string, data []byte) error {
 	c.mu.Unlock()
 	return nil
 }
-func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]byte, error)) ([]byte, error) {
+func (c *thumbnailCache) get(ctx context.Context, key string, build func(context.Context) ([]byte, error)) ([]byte, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -118,6 +119,7 @@ func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]by
 		}
 		c.mu.Lock()
 		if call := c.flights[key]; call != nil {
+			call.demand.promote(priorityFromContext(ctx))
 			c.mu.Unlock()
 			select {
 			case <-ctx.Done():
@@ -129,14 +131,14 @@ func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]by
 				return call.data, call.err
 			}
 		}
-		call := &thumbnailFlight{done: make(chan struct{})}
+		call := &thumbnailFlight{done: make(chan struct{}), demand: newRenderDemand(ctx)}
 		c.flights[key] = call
 		c.mu.Unlock()
 		// Recheck after claiming the key; another request may have just stored it.
 		if data, ok := c.read(key); ok {
 			call.data = data
 		} else {
-			call.data, call.err = build()
+			call.data, call.err = build(context.WithValue(ctx, renderDemandKey{}, call.demand))
 			if call.err == nil && ctx.Err() == nil {
 				_ = c.store(key, call.data)
 			}
@@ -149,27 +151,24 @@ func (c *thumbnailCache) get(ctx context.Context, key string, build func() ([]by
 	}
 }
 
-// Cache thumbnails and the standard viewer variant. Arbitrary large dimensions
-// remain uncached to keep the shared disk budget useful.
+// Cache thumbnails and a bounded set of square viewer variants, shared by
+// fullscreen, normal viewing and prefetch. Preserve the legacy frame variant.
 func (l *Library) jpeg(ctx context.Context, p Photo, width, height, quality int) ([]byte, error) {
-	build := func() ([]byte, error) {
+	build := func(ctx context.Context) ([]byte, error) {
 		l.lastRender.Store(time.Now().UnixNano())
 		defer func() { l.lastRender.Store(time.Now().UnixNano()) }()
-		if l.renderSlots != nil {
-			select {
-			case l.renderSlots <- struct{}{}:
-				defer func() { <-l.renderSlots }()
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+		release, err := l.renderSlots.acquire(ctx)
+		if err != nil {
+			return nil, err
 		}
+		defer release()
 		if l.isolateRendering {
 			return l.processPreview(ctx, p, width, height, quality)
 		}
 		return l.renderJPEG(ctx, p, width, height, quality)
 	}
-	if l.thumbnails == nil || ((width > 640 || height > 640) && !((width == 1920 && height == 1440 && quality == 85) || (width == 1280 && height == 1280 && quality == 80))) {
-		return build()
+	if l.thumbnails == nil || ((width > 640 || height > 640) && !((width == 1920 && height == 1440 && quality == 85) || (width == height && (width == 1280 || width == 1920 || width == 2560) && quality == 80))) {
+		return build(ctx)
 	}
 	key, err := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", width, height, quality))
 	if err != nil {
@@ -199,7 +198,7 @@ func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width,
 		return nil, err
 	}
 	crop := &faceCrop{Box: b, Width: width, Height: height}
-	build := func() ([]byte, error) {
+	build := func(ctx context.Context) ([]byte, error) {
 		if l.isolateRendering {
 			if len(background) > 0 && background[0] {
 				select {
@@ -212,19 +211,18 @@ func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width,
 			}
 			l.lastRender.Store(time.Now().UnixNano())
 			defer func() { l.lastRender.Store(time.Now().UnixNano()) }()
-			select {
-			case l.renderSlots <- struct{}{}:
-				defer func() { <-l.renderSlots }()
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			release, err := l.renderSlots.acquire(ctx)
+			if err != nil {
+				return nil, err
 			}
+			defer release()
 			return l.processPreview(ctx, p, 1280, 1280, 80, crop)
 		}
 		worker := &Library{config: l.config, root: l.root, rootPath: l.rootPath, faceCrop: crop}
 		return worker.renderJPEG(ctx, p, 1280, 1280, 80)
 	}
 	if l.thumbnails == nil {
-		return build()
+		return build(ctx)
 	}
 	return l.thumbnails.get(ctx, key, build)
 }
@@ -242,7 +240,7 @@ func (l *Library) seedThumbnail(p Photo, preview []byte, key string) {
 	if _, ok := l.thumbnails.read(key); ok {
 		return
 	}
-	_, _ = l.thumbnails.get(context.Background(), key, func() ([]byte, error) {
+	_, _ = l.thumbnails.get(context.Background(), key, func(context.Context) ([]byte, error) {
 		img, err := jpeg.Decode(bytes.NewReader(preview))
 		if err != nil {
 			return nil, err
@@ -301,7 +299,7 @@ func (l *Library) warmThumbnails(ctx context.Context) {
 				continue
 			}
 			// Foreground browsing always takes priority over speculative warming.
-			for l.ai.paused.Load() || len(l.renderSlots) > 0 || time.Since(time.Unix(0, l.lastRender.Load())) < 2*time.Second {
+			for l.ai.paused.Load() || l.renderSlots.active() > 0 || time.Since(time.Unix(0, l.lastRender.Load())) < 2*time.Second {
 				if !waitContext(ctx, time.Second) {
 					return
 				}

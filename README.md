@@ -676,9 +676,15 @@ a single background worker also warms existing group covers, largest groups
 first, sharing the background decoder and yielding to foreground rendering.
 Cached portraits retain source-signature invalidation and visibility checks.
 
-The image viewer uses a cached 1280px preview on normal screens, shared with ML
-indexing, and requests 1920px for large screens, zoom, or fullscreen. Recent viewer
-images also share the bounded client blob cache; navigation aborts obsolete fetches.
+The image viewer chooses cached 1280px, 1920px or 2560px square bounding boxes
+from the target photo's aspect ratio, display size, pixel density and zoom. The
+1280px variant is shared with ML indexing. Viewer and speculative next-photo
+requests share the bounded client blob cache and server cache; navigation aborts
+obsolete requests. Visible images take priority over queued grid/face previews,
+which take priority over speculative prefetch, within the same two-render limit.
+A queued prefetch is promoted if its photo becomes visible; aging prevents other
+requests from starving. Grid fetching pauses while the viewer is open.
+Run `node --test scripts/viewer-regression.test.js` for viewer regression tests.
 Use +/minus to zoom, the percentage button to reset, and drag to pan while zoomed.
 Fullscreen targets the document rather than the modal dialog.
 

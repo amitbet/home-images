@@ -58,6 +58,13 @@ function resetThumbnailRequests() {
 }
 function cacheThumbnail(url, blob) {
   const old = clientThumbnails.get(url);
+  // Foreground and prefetch can finish together. Keep the first object URL alive
+  // while an Image is decoding it instead of revoking it in the second response.
+  if (old && old.expires > Date.now()) {
+    clientThumbnails.delete(url);
+    clientThumbnails.set(url, old);
+    return old;
+  }
   if (old) { URL.revokeObjectURL(old.src); clientThumbnailBytes -= old.size; }
   const entry = { src: URL.createObjectURL(blob), size: blob.size, expires: Date.now() + 300000 };
   clientThumbnails.delete(url);
@@ -77,6 +84,7 @@ function requestThumbnail(img) {
   pumpThumbnails();
 }
 function pumpThumbnails() {
+  if ($("viewer").open) return;
   while (thumbnailActive < 4 && thumbnailQueue.length) {
     const job = thumbnailQueue.shift();
     if (!job.img.isConnected || job.generation !== state.generation) continue;
@@ -1323,11 +1331,20 @@ function renderPhotoAlbums(a) {
 function displayFilename(name = "") {
   return name.replace(/--[a-f0-9]{64}(?=\.[^.]+$)/i, "");
 }
-const viewerURL = (photo, large = false) => {
-  const stage=document.querySelector(".viewer-stage"),img=$("fullImage"),factor=large ? Math.min(devicePixelRatio || 1,2)*viewerZoom : 1;
-  const width=Math.min(2560,Math.max(320,Math.ceil((img.clientWidth || (stage?.clientWidth || innerWidth)-100)*factor/160)*160));
-  const height=Math.min(2560,Math.max(320,Math.ceil((img.clientHeight || stage?.clientHeight || innerHeight*.7)*factor/160)*160));
-  return photo.image_url+`?width=${width}&height=${height}&quality=80`;
+// Measure the target photo, including during prefetch. The current image may
+// have a different orientation or still be showing its thumbnail.
+function viewerSize(photo) {
+  const stage = document.querySelector(".viewer-stage");
+  const ratio = (photo.width || 4) / (photo.height || 3);
+  const width = Math.min(Math.max(1, (stage.clientWidth || innerWidth)),
+    Math.max(1, stage.clientHeight || innerHeight * .7) * ratio);
+  return { width, height: width / ratio };
+}
+const viewerURL = (photo) => {
+  const size = viewerSize(photo);
+  const pixels = Math.max(size.width, size.height) * Math.min(devicePixelRatio || 1, 2) * viewerZoom;
+  const side = [1280, 1920, 2560].find(side => side >= pixels) || 2560;
+  return photo.image_url + `?width=${side}&height=${side}&quality=80`;
 };
 let viewerFetch = null;
 let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null;
@@ -1362,23 +1379,49 @@ $("fullImage").addEventListener("pointermove", e => {
 });
 for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) $("fullImage").addEventListener(event, () => {viewerDrag=null;});
 function fetchViewerImage(image, url) {
+  image.dataset.requestedResolution = url;
   viewerFetch?.abort();
-  const controller = new AbortController();viewerFetch=controller;
+  const controller = new AbortController();
+  viewerFetch = controller;
   const cached = clientThumbnails.get(url);
-  if (cached && cached.expires > Date.now()) {image.src=cached.src;return;}
-  fetch(url,{signal:controller.signal,priority:"high"}).then(r=>{if(!r.ok)throw Error("Preview "+r.status);return r.blob();}).then(blob=>{
-    if (!controller.signal.aborted) image.src=cacheThumbnail(url,blob).src;
-  }).catch(e=>{if(e.name!=="AbortError")image.onerror?.();});
+  if (cached && cached.expires > Date.now()) { image.src = cached.src; return; }
+  // A failed/stalled response must leave a retryable preview, not an endless spinner.
+  const timeout = setTimeout(() => {
+    if (!controller.signal.aborted) { controller.abort(); image.onerror?.(); }
+  }, 30000);
+  fetch(url + "&priority=viewer", { signal: controller.signal, priority: "high" })
+    .then(r => { if (!r.ok) throw Error("Preview " + r.status); return r.blob(); })
+    .then(blob => {
+      if (!controller.signal.aborted) image.src = cacheThumbnail(url, blob).src;
+    })
+    .catch(() => { if (!controller.signal.aborted) image.onerror?.(); })
+    .finally(() => clearTimeout(timeout));
 }
 let resolutionTimer;
 function upgradeViewerResolution() {
-  clearTimeout(resolutionTimer);resolutionTimer=setTimeout(()=>{
-    const photo=currentPhoto();if(!photo || !$("viewer").open)return;
-    const url=viewerURL(photo,true),display=$("fullImage");if(display.dataset.resolution===url)return;
-    const generation=state.viewerGeneration,image=new Image();
-    image.onload=()=>{if(generation===state.viewerGeneration){display.src=image.src;display.dataset.resolution=url;display.classList.remove("loading");}};
-    fetchViewerImage(image,url);
-  },160);
+  clearTimeout(resolutionTimer);
+  resolutionTimer = setTimeout(() => {
+    const photo = currentPhoto();
+    if (!photo || !$("viewer").open) return;
+    const url = viewerURL(photo), display = $("fullImage");
+    if (display.dataset.resolution === url || viewerRequest?.dataset.requestedResolution === url) return;
+    const gen = state.viewerGeneration, image = new Image();
+    viewerRequest = image;
+    image.onload = () => {
+      if (gen !== state.viewerGeneration || viewerRequest !== image) return;
+      display.src = image.src;
+      display.dataset.resolution = url;
+      display.classList.remove("loading");
+      preloadNext(photo, gen, !!state.playbackPhoto);
+    };
+    image.onerror = () => {
+      if (gen !== state.viewerGeneration || viewerRequest !== image) return;
+      viewerRequest = null;
+      display.classList.remove("loading");
+      toast("Full preview unavailable. Try zooming again or open the original.");
+    };
+    fetchViewerImage(image, url);
+  }, 160);
 }
 document.querySelector(".viewer-stage").addEventListener("wheel",e=>{
   if(!$("viewer").open)return;e.preventDefault();stopPlay();
@@ -1392,22 +1435,42 @@ function playbackQuery(previous) {
   if (previous) p.set("after", previous.id);
   return "/api/playback/next?" + p;
 }
-function clearViewerPreview() {
+function clearViewerPreview(keepURL = null) {
   clearTimeout(resolutionTimer);
-  viewerFetch?.abort();viewerFetch=null;
-  for (const image of [viewerRequest, nextPreview]) {
-    if (image) { image.onload = image.onerror = null; image.removeAttribute("src"); }
+  viewerFetch?.abort();
+  viewerFetch = null;
+  if (viewerRequest) {
+    viewerRequest.onload = viewerRequest.onerror = null;
+    viewerRequest.removeAttribute("src");
   }
-  viewerRequest = nextPreview = null;
+  viewerRequest = null;
+  if (nextPreview && nextPreview.url !== keepURL) {
+    nextPreview.controller.abort();
+    nextPreview = null;
+  }
   playbackPrefetch = null;
 }
 function preloadNext(photo, gen, external) {
   if (gen !== state.viewerGeneration || !$("viewer").open) return;
   const warm = (next) => {
-    if (!next || next.id === photo.id || gen !== state.viewerGeneration) return;
-    nextPreview = new Image();
-    nextPreview.fetchPriority = "low";
-    nextPreview.src = viewerURL(next);
+    if (!next || next.id === photo.id || gen !== state.viewerGeneration || !$("viewer").open) return;
+    const url = viewerURL(next);
+    if (nextPreview?.url === url) return;
+    nextPreview?.controller.abort();
+    nextPreview = null;
+    const cached = clientThumbnails.get(url);
+    if (cached && cached.expires > Date.now()) return;
+    const controller = new AbortController(), request = { url, controller };
+    nextPreview = request;
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    fetch(url + "&priority=prefetch", { signal: controller.signal, priority: "low" })
+      .then(r => { if (!r.ok) throw Error("Preview " + r.status); return r.blob(); })
+      .then(blob => { if (!controller.signal.aborted) cacheThumbnail(url, blob); })
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(timeout);
+        if (nextPreview === request) nextPreview = null;
+      });
   };
   if (external) {
     const url = playbackQuery(photo);
@@ -1421,12 +1484,13 @@ function preloadNext(photo, gen, external) {
   }
 }
 function showViewerPreview(photo, gen, external) {
-  const preloaded = nextPreview?.src === new URL(viewerURL(photo), location.href).href ? nextPreview : null;
-  if (preloaded) nextPreview = null;
-  clearViewerPreview();
+  sizeViewerImage(photo);
+  const url = viewerURL(photo);
+  // Retain a matching in-flight prefetch. The foreground request promotes its
+  // shared server render and both use the same client cache key.
+  clearViewerPreview(url);
   const display = $("fullImage");
   display.classList.add("loading");
-  // Browsers may retain the previous decoded bitmap until a new src loads.
   display.style.visibility = "hidden";
   display.removeAttribute("src");
   display.onload = () => {
@@ -1435,27 +1499,26 @@ function showViewerPreview(photo, gen, external) {
   display.onerror = () => {
     if (gen === state.viewerGeneration) display.style.visibility = "hidden";
   };
-  const thumbURL="/api/images/"+photo.id+"/thumbnail";
-  display.src=clientThumbnails.get(thumbURL)?.src || thumbURL;
-  sizeViewerImage(photo);
-  const full = preloaded || new Image();
+  const thumbURL = "/api/images/" + photo.id + "/thumbnail";
+  display.src = clientThumbnails.get(thumbURL)?.src || thumbURL;
+  const full = new Image();
   viewerRequest = full;
-  full.fetchPriority = "high";
   full.onload = () => {
-    if (gen !== state.viewerGeneration) return;
-    if(viewerZoom>1)return;
-    display.dataset.resolution=viewerURL(photo);
+    if (gen !== state.viewerGeneration || viewerRequest !== full) return;
+    // Record the variant actually loaded, never a URL recomputed after layout.
+    display.dataset.resolution = url;
     display.src = full.src;
     display.classList.remove("loading");
     preloadNext(photo, gen, external);
+    if (viewerURL(photo) !== url) upgradeViewerResolution();
   };
   full.onerror = () => {
-    if (gen !== state.viewerGeneration) return;
+    if (gen !== state.viewerGeneration || viewerRequest !== full) return;
+    viewerRequest = null;
     display.classList.remove("loading");
     toast("Full preview unavailable. Showing thumbnail; try the original.");
   };
-  if (preloaded && full.complete && full.naturalWidth) queueMicrotask(() => full.onload?.());
-  else if (!preloaded) fetchViewerImage(full, viewerURL(photo));
+  fetchViewerImage(full, url);
 }
 async function openImage(i, external = null) {
   if (!state.items.length && !external) return;
@@ -1629,10 +1692,11 @@ function placeFaceLayer() {
   layer.style.height = r.height + "px";
 }
 $("fullImage").addEventListener("load", placeFaceLayer);
-function sizeViewerImage(photo=currentPhoto()) {
-  if(!photo)return;const stage=document.querySelector(".viewer-stage"),img=$("fullImage");
-  const ratio=(photo.width || 4)/(photo.height || 3),width=Math.min(Math.max(1,stage.clientWidth),Math.max(1,stage.clientHeight)*ratio);
-  img.style.width=width+"px";img.style.height=width/ratio+"px";
+function sizeViewerImage(photo = currentPhoto()) {
+  if (!photo) return;
+  const size = viewerSize(photo), image = $("fullImage");
+  image.style.width = size.width + "px";
+  image.style.height = size.height + "px";
 }
 window.addEventListener("resize",()=>{if($("viewer").open){sizeViewerImage();upgradeViewerResolution();}placeFaceLayer();});
 if (typeof ResizeObserver === "function")
@@ -1895,6 +1959,7 @@ async function advance(direction, auto = false) {
 $("viewer").addEventListener("close", () => {
   state.viewerGeneration++;
   clearViewerPreview();
+  pumpThumbnails();
   const display = $("fullImage");
   display.onload = display.onerror = null;
   display.style.visibility = "hidden";

@@ -74,7 +74,7 @@ func (l *Library) seedFaceThumbnails(ctx context.Context, p Photo, preview []byt
 		if err != nil {
 			return
 		}
-		_, _ = l.thumbnails.get(ctx, key, func() ([]byte, error) {
+		_, _ = l.thumbnails.get(ctx, key, func(context.Context) ([]byte, error) {
 			thumb, e := cropFace(img, &faceCrop{Box: b, Width: pred.Width, Height: pred.Height})
 			if e != nil {
 				return nil, e

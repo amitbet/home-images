@@ -1,0 +1,838 @@
+{
+  "recordedAt": "2026-10-31T07:34:58Z",
+  "transport": "Chrome DevTools on user Mac to live LAN server",
+  "health": {
+    "images": 178366,
+    "jpeg_decoder": "turbojpeg",
+    "scanning": false,
+    "version": "dev"
+  },
+  "method": {
+    "photos": 5,
+    "requests": 50,
+    "dynamic": [
+      1440,
+      960,
+      80
+    ],
+    "cacheable": [
+      1280,
+      1280,
+      80
+    ],
+    "browserCache": "bypassed with no-store and a nonce ignored by server cache keys",
+    "throttling": "No throttling (verified in DevTools); Disable cache was already checked",
+    "contention": "Four small previews at distinct quality settings, then viewer 30ms later; alone/busy order alternated",
+    "limitations": [
+      "Convenience sample of five recent photos, not library-wide percentiles.",
+      "First cacheable pass is not guaranteed cold; repeat pass is warmed. Small preview quality changes approximate cold cache.",
+      "TTFB combines network latency, metadata/disk work, queue delay and decoding; no server-internal trace was collected.",
+      "No server restart, cache deletion, settings writes or deployment.",
+      "Download timing includes delivery delays and browser scheduling; exact cause requires network/server traces.",
+      "A completed fuzzy preload was reproduced twice; an uninterrupted one-to-two-minute stall was not verified. Later browser interaction changed the resolution."
+    ]
+  },
+  "summary": {
+    "dynamic1": {
+      "n": 5,
+      "median_ms": 820,
+      "median_ttfb": 215,
+      "median_download": 643,
+      "median_bytes": 61535
+    },
+    "cached1": {
+      "n": 5,
+      "median_ms": 367,
+      "median_ttfb": 215,
+      "median_download": 169,
+      "median_bytes": 106305
+    },
+    "dynamic2": {
+      "n": 5,
+      "median_ms": 747,
+      "median_ttfb": 166,
+      "median_download": 408,
+      "median_bytes": 61535
+    },
+    "cached2": {
+      "n": 5,
+      "median_ms": 172,
+      "median_ttfb": 17,
+      "median_download": 157,
+      "median_bytes": 106305
+    },
+    "viewer-alone": {
+      "n": 5,
+      "median_ms": 896,
+      "median_ttfb": 441,
+      "median_download": 327,
+      "median_bytes": 61535
+    },
+    "viewer": {
+      "n": 5,
+      "median_ms": 1134,
+      "median_ttfb": 484,
+      "median_download": 669,
+      "median_bytes": 61535
+    },
+    "grid-cold": {
+      "n": 20,
+      "median_ms": 380.5,
+      "median_ttfb": 271.5,
+      "median_download": 3.5,
+      "median_bytes": 10948.5
+    }
+  },
+  "pairedContentionTTFBDeltasMS": [
+    43,
+    73,
+    161,
+    -820,
+    223
+  ],
+  "rows": [
+    {
+      "label": "dynamic1",
+      "round": 0,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 410,
+      "headers": 171,
+      "ttfb": 170,
+      "download": 239,
+      "bytes": 61535
+    },
+    {
+      "label": "cached1",
+      "round": 0,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 564,
+      "headers": 216,
+      "ttfb": 215,
+      "download": 348,
+      "bytes": 106305
+    },
+    {
+      "label": "dynamic2",
+      "round": 0,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 189,
+      "headers": 159,
+      "ttfb": 153,
+      "download": 31,
+      "bytes": 61535
+    },
+    {
+      "label": "cached2",
+      "round": 0,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 424,
+      "headers": 34,
+      "ttfb": 30,
+      "download": 389,
+      "bytes": 106305
+    },
+    {
+      "label": "dynamic1",
+      "round": 1,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 5632,
+      "headers": 232,
+      "ttfb": 227,
+      "download": 5402,
+      "bytes": 188302
+    },
+    {
+      "label": "cached1",
+      "round": 1,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 1340,
+      "headers": 241,
+      "ttfb": 237,
+      "download": 1099,
+      "bytes": 155291
+    },
+    {
+      "label": "dynamic2",
+      "round": 1,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 1250,
+      "headers": 644,
+      "ttfb": 639,
+      "download": 608,
+      "bytes": 188302
+    },
+    {
+      "label": "cached2",
+      "round": 1,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 111,
+      "headers": 110,
+      "ttfb": 54,
+      "download": 53,
+      "bytes": 155291
+    },
+    {
+      "label": "dynamic1",
+      "round": 2,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 435,
+      "headers": 216,
+      "ttfb": 215,
+      "download": 219,
+      "bytes": 51314
+    },
+    {
+      "label": "cached1",
+      "round": 2,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 255,
+      "headers": 229,
+      "ttfb": 228,
+      "download": 25,
+      "bytes": 83850
+    },
+    {
+      "label": "dynamic2",
+      "round": 2,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 791,
+      "headers": 383,
+      "ttfb": 376,
+      "download": 408,
+      "bytes": 51314
+    },
+    {
+      "label": "cached2",
+      "round": 2,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 172,
+      "headers": 15,
+      "ttfb": 9,
+      "download": 157,
+      "bytes": 83850
+    },
+    {
+      "label": "dynamic1",
+      "round": 3,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 820,
+      "headers": 178,
+      "ttfb": 170,
+      "download": 646,
+      "bytes": 52336
+    },
+    {
+      "label": "cached1",
+      "round": 3,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 230,
+      "headers": 205,
+      "ttfb": 199,
+      "download": 28,
+      "bytes": 95005
+    },
+    {
+      "label": "dynamic2",
+      "round": 3,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 747,
+      "headers": 149,
+      "ttfb": 140,
+      "download": 605,
+      "bytes": 52336
+    },
+    {
+      "label": "cached2",
+      "round": 3,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 29,
+      "headers": 21,
+      "ttfb": 17,
+      "download": 7,
+      "bytes": 95005
+    },
+    {
+      "label": "dynamic1",
+      "round": 4,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 867,
+      "headers": 222,
+      "ttfb": 220,
+      "download": 643,
+      "bytes": 100659
+    },
+    {
+      "label": "cached1",
+      "round": 4,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 367,
+      "headers": 200,
+      "ttfb": 192,
+      "download": 169,
+      "bytes": 187278
+    },
+    {
+      "label": "dynamic2",
+      "round": 4,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 189,
+      "headers": 173,
+      "ttfb": 166,
+      "download": 18,
+      "bytes": 100659
+    },
+    {
+      "label": "cached2",
+      "round": 4,
+      "width": 1280,
+      "height": 1280,
+      "quality": 80,
+      "status": 200,
+      "ms": 264,
+      "headers": 14,
+      "ttfb": 10,
+      "download": 250,
+      "bytes": 187278
+    },
+    {
+      "label": "viewer-alone",
+      "round": 0,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 715,
+      "headers": 444,
+      "ttfb": 441,
+      "download": 271,
+      "bytes": 61535
+    },
+    {
+      "label": "grid-cold",
+      "round": 0,
+      "width": 480,
+      "height": 360,
+      "quality": 71,
+      "status": 200,
+      "ms": 273,
+      "headers": 271,
+      "ttfb": 268,
+      "download": 3,
+      "bytes": 9104
+    },
+    {
+      "label": "grid-cold",
+      "round": 0,
+      "width": 480,
+      "height": 360,
+      "quality": 71,
+      "status": 200,
+      "ms": 278,
+      "headers": 276,
+      "ttfb": 270,
+      "download": 2,
+      "bytes": 6981
+    },
+    {
+      "label": "grid-cold",
+      "round": 0,
+      "width": 480,
+      "height": 360,
+      "quality": 71,
+      "status": 200,
+      "ms": 433,
+      "headers": 409,
+      "ttfb": 406,
+      "download": 25,
+      "bytes": 24550
+    },
+    {
+      "label": "grid-cold",
+      "round": 0,
+      "width": 480,
+      "height": 360,
+      "quality": 71,
+      "status": 200,
+      "ms": 440,
+      "headers": 439,
+      "ttfb": 433,
+      "download": 2,
+      "bytes": 11241
+    },
+    {
+      "label": "viewer",
+      "round": 0,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 558,
+      "headers": 497,
+      "ttfb": 484,
+      "download": 61,
+      "bytes": 61535
+    },
+    {
+      "label": "grid-cold",
+      "round": 1,
+      "width": 480,
+      "height": 360,
+      "quality": 73,
+      "status": 200,
+      "ms": 220,
+      "headers": 218,
+      "ttfb": 211,
+      "download": 2,
+      "bytes": 9430
+    },
+    {
+      "label": "grid-cold",
+      "round": 1,
+      "width": 480,
+      "height": 360,
+      "quality": 73,
+      "status": 200,
+      "ms": 624,
+      "headers": 219,
+      "ttfb": 211,
+      "download": 406,
+      "bytes": 11705
+    },
+    {
+      "label": "grid-cold",
+      "round": 1,
+      "width": 480,
+      "height": 360,
+      "quality": 73,
+      "status": 200,
+      "ms": 627,
+      "headers": 625,
+      "ttfb": 616,
+      "download": 5,
+      "bytes": 10148
+    },
+    {
+      "label": "grid-cold",
+      "round": 1,
+      "width": 480,
+      "height": 360,
+      "quality": 73,
+      "status": 200,
+      "ms": 630,
+      "headers": 629,
+      "ttfb": 623,
+      "download": 1,
+      "bytes": 7283
+    },
+    {
+      "label": "viewer",
+      "round": 1,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 1616,
+      "headers": 861,
+      "ttfb": 858,
+      "download": 756,
+      "bytes": 188302
+    },
+    {
+      "label": "viewer-alone",
+      "round": 1,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 1118,
+      "headers": 795,
+      "ttfb": 785,
+      "download": 327,
+      "bytes": 188302
+    },
+    {
+      "label": "viewer-alone",
+      "round": 2,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 896,
+      "headers": 191,
+      "ttfb": 184,
+      "download": 704,
+      "bytes": 51314
+    },
+    {
+      "label": "grid-cold",
+      "round": 2,
+      "width": 480,
+      "height": 360,
+      "quality": 75,
+      "status": 200,
+      "ms": 274,
+      "headers": 270,
+      "ttfb": 266,
+      "download": 5,
+      "bytes": 10552
+    },
+    {
+      "label": "grid-cold",
+      "round": 2,
+      "width": 480,
+      "height": 360,
+      "quality": 75,
+      "status": 200,
+      "ms": 275,
+      "headers": 272,
+      "ttfb": 268,
+      "download": 4,
+      "bytes": 7581
+    },
+    {
+      "label": "grid-cold",
+      "round": 2,
+      "width": 480,
+      "height": 360,
+      "quality": 75,
+      "status": 200,
+      "ms": 278,
+      "headers": 277,
+      "ttfb": 274,
+      "download": 1,
+      "bytes": 12233
+    },
+    {
+      "label": "grid-cold",
+      "round": 2,
+      "width": 480,
+      "height": 360,
+      "quality": 75,
+      "status": 200,
+      "ms": 670,
+      "headers": 276,
+      "ttfb": 273,
+      "download": 393,
+      "bytes": 26350
+    },
+    {
+      "label": "viewer",
+      "round": 2,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 644,
+      "headers": 347,
+      "ttfb": 345,
+      "download": 297,
+      "bytes": 51314
+    },
+    {
+      "label": "grid-cold",
+      "round": 3,
+      "width": 480,
+      "height": 360,
+      "quality": 77,
+      "status": 200,
+      "ms": 328,
+      "headers": 325,
+      "ttfb": 321,
+      "download": 3,
+      "bytes": 10298
+    },
+    {
+      "label": "grid-cold",
+      "round": 3,
+      "width": 480,
+      "height": 360,
+      "quality": 77,
+      "status": 200,
+      "ms": 567,
+      "headers": 564,
+      "ttfb": 558,
+      "download": 6,
+      "bytes": 13006
+    },
+    {
+      "label": "grid-cold",
+      "round": 3,
+      "width": 480,
+      "height": 360,
+      "quality": 77,
+      "status": 200,
+      "ms": 674,
+      "headers": 564,
+      "ttfb": 558,
+      "download": 113,
+      "bytes": 27798
+    },
+    {
+      "label": "grid-cold",
+      "round": 3,
+      "width": 480,
+      "height": 360,
+      "quality": 77,
+      "status": 200,
+      "ms": 676,
+      "headers": 676,
+      "ttfb": 670,
+      "download": 3,
+      "bytes": 11172
+    },
+    {
+      "label": "viewer",
+      "round": 3,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 1374,
+      "headers": 706,
+      "ttfb": 702,
+      "download": 669,
+      "bytes": 52336
+    },
+    {
+      "label": "viewer-alone",
+      "round": 3,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 2539,
+      "headers": 1527,
+      "ttfb": 1522,
+      "download": 1013,
+      "bytes": 52336
+    },
+    {
+      "label": "viewer-alone",
+      "round": 4,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 162,
+      "headers": 157,
+      "ttfb": 149,
+      "download": 8,
+      "bytes": 100659
+    },
+    {
+      "label": "grid-cold",
+      "round": 4,
+      "width": 480,
+      "height": 360,
+      "quality": 79,
+      "status": 200,
+      "ms": 252,
+      "headers": 247,
+      "ttfb": 241,
+      "download": 7,
+      "bytes": 11698
+    },
+    {
+      "label": "grid-cold",
+      "round": 4,
+      "width": 480,
+      "height": 360,
+      "quality": 79,
+      "status": 200,
+      "ms": 253,
+      "headers": 252,
+      "ttfb": 248,
+      "download": 2,
+      "bytes": 8499
+    },
+    {
+      "label": "grid-cold",
+      "round": 4,
+      "width": 480,
+      "height": 360,
+      "quality": 79,
+      "status": 200,
+      "ms": 253,
+      "headers": 252,
+      "ttfb": 248,
+      "download": 2,
+      "bytes": 10725
+    },
+    {
+      "label": "grid-cold",
+      "round": 4,
+      "width": 480,
+      "height": 360,
+      "quality": 79,
+      "status": 200,
+      "ms": 1115,
+      "headers": 250,
+      "ttfb": 242,
+      "download": 869,
+      "bytes": 29072
+    },
+    {
+      "label": "viewer",
+      "round": 4,
+      "width": 1440,
+      "height": 960,
+      "quality": 80,
+      "status": 200,
+      "ms": 1134,
+      "headers": 377,
+      "ttfb": 372,
+      "download": 759,
+      "bytes": 100659
+    }
+  ],
+  "uiEvidence": {
+    "flow": "Clicked photo, toggled fullscreen, next/previous navigation",
+    "fullscreenUpgrade": {
+      "requested": [
+        1280,
+        2560,
+        80
+      ],
+      "durationMS": 616,
+      "ttfbMS": 576,
+      "downloadMS": 38
+    },
+    "fuzzyPreload": {
+      "firstObserved": "2026-10-31T07:36Z",
+      "reproducedAt": "2026-10-31T07:37:40.013Z",
+      "imageComplete": true,
+      "loadingClass": false,
+      "actualURLDimensions": [
+        640,
+        1280,
+        80
+      ],
+      "naturalDimensions": [
+        640,
+        295
+      ],
+      "markedURLDimensions": [
+        2560,
+        1280,
+        80
+      ],
+      "originalDimensions": [
+        4080,
+        1884
+      ]
+    },
+    "navigationBackWithoutPreload": {
+      "naturalDimensions": [
+        2560,
+        1182
+      ]
+    },
+    "otherViewerRequest": {
+      "requested": [
+        2560,
+        1440,
+        80
+      ],
+      "durationMS": 3350,
+      "ttfbMS": 423,
+      "downloadMS": 2926
+    }
+  },
+  "findings": [
+    {
+      "issue": "Preload resolution mismatch",
+      "evidence": "Completed 640x295 landscape image marked as 2560x1280 preview on portrait-to-landscape fullscreen navigation. Reproduced twice.",
+      "source": [
+        "web/app.js:1309",
+        "web/app.js:1387",
+        "web/app.js:1406"
+      ],
+      "action": "Size requests from the target photo and stage; store the actual request variant; upgrade any undersized preload after display."
+    },
+    {
+      "issue": "Dynamic viewer variants bypass server cache",
+      "evidence": "Repeated dynamic variant median TTFB 166ms; warmed cacheable variant 17ms. Different output bounds and payloads prevent treating this as a pure end-to-end speedup.",
+      "source": [
+        "thumbnails.go:171",
+        "web/app.js:1309"
+      ],
+      "action": "Choose a bounded set of cacheable viewer variants shared by normal fetches, fullscreen and prefetch."
+    },
+    {
+      "issue": "No foreground priority between HTTP render jobs",
+      "evidence": "Two channel slots serve thumbnails, viewer and foreground face crops without priority; background decoder is already separate. Contention sample is noisy, with median paired TTFB increase of 73ms and one -820ms outlier.",
+      "source": [
+        "library.go:87",
+        "thumbnails.go:158",
+        "thumbnails.go:216"
+      ],
+      "action": "Use explicit visible-viewer, visible-grid, speculative priority classes; preserve concurrency/memory bounds, cancellation and fairness. Promote queued prefetch when it becomes visible. Add queue/render/cache Server-Timing before attributing long stalls to this queue."
+    },
+    {
+      "issue": "Slow body delivery",
+      "evidence": "One 188302-byte request: TTFB 227ms, body download 5402ms. Actual UI 2560x1440 request: TTFB 423ms, body download 2926ms.",
+      "source": [
+        "api.go:338",
+        "web/app.js:1352"
+      ],
+      "action": "Measure network/write delays separately. Viewer waits for response.blob before displaying, so partial body delivery cannot sharpen it."
+    }
+  ]
+}
