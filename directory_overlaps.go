@@ -199,17 +199,41 @@ func (l *Library) directoryOverlaps(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	filtered := []directoryOverlap{}
-	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	type overlapPair struct {
+		First  directoryOverlap `json:"first"`
+		Second directoryOverlap `json:"second"`
+	}
+	grouped := map[[2]string]*overlapPair{}
+	ordered := [][2]string{}
 	for _, pair := range pairs {
+		a, b := pair.Source, pair.Keep
+		if a > b {
+			a, b = b, a
+		}
+		key := [2]string{a, b}
+		if grouped[key] == nil {
+			grouped[key] = &overlapPair{}
+			ordered = append(ordered, key)
+		}
+		if pair.Source == a {
+			grouped[key].First = pair
+		} else {
+			grouped[key].Second = pair
+		}
+	}
+	filtered := []overlapPair{}
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	for _, key := range ordered {
+		group := grouped[key]
+		pair := group.First
 		if query != "" && !strings.Contains(strings.ToLower(pair.Source+" "+pair.Keep), query) {
 			continue
 		}
-		if r.URL.Query().Get("full") == "true" && !pair.Full {
+		if r.URL.Query().Get("full") == "true" && !pair.Full && !group.Second.Full {
 			continue
 		}
-		if pair.ContentFiles >= minimum {
-			filtered = append(filtered, pair)
+		if pair.ContentFiles >= minimum || group.Second.ContentFiles >= minimum {
+			filtered = append(filtered, *group)
 		}
 	}
 	total := len(filtered)

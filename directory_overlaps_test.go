@@ -262,3 +262,34 @@ func TestBulkCleanupPlanSurvivesServiceRestart(t *testing.T) {
 		t.Fatal(done, failed)
 	}
 }
+
+func TestOverlapEndpointGroupsBothDirections(t *testing.T) {
+	_, s, _ := bulkFixture(t)
+	w := httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/overlaps?scope=bulk&depth=1&minimum=1", nil))
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var result struct {
+		Total int `json:"total"`
+		Items []struct {
+			First  directoryOverlap `json:"first"`
+			Second directoryOverlap `json:"second"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatal(w.Body.String())
+	}
+	a, b := result.Items[0].First, result.Items[0].Second
+	if a.Source != b.Keep || a.Keep != b.Source || a.SourceFiles == b.SourceFiles || a.ExactFiles != 2 || b.ExactFiles != 2 {
+		t.Fatal(a, b)
+	}
+	w = httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/overlaps?scope=bulk&depth=1&minimum=1&full=true", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Total != 1 {
+		t.Fatal(w.Body.String(), err)
+	}
+}
