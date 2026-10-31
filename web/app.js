@@ -1558,8 +1558,9 @@ async function openImage(i, external = null) {
     preloadNext(photo, gen, external);
   } else showViewerPreview(photo, gen, external);
   $("viewerBack").textContent="\u2190";
-  $("imagePath").textContent = photo.path || [photo.directory, photo.filename].filter(Boolean).join("/");
-  $("imagePath").title = $("imagePath").textContent;
+  const storagePath = photo.path || [photo.directory, photo.filename].filter(Boolean).join("/");
+  $("imagePath").textContent = storagePath.startsWith("Phone backups/") ? displayFilename(photo.filename) : storagePath;
+  $("imagePath").title = storagePath;
   $("imageMeta").textContent = [
     date(photo),
     a.location || a.auto_location,
