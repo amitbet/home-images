@@ -223,6 +223,16 @@ migration deliberately keeps each existing catalog record independent.
 
 ## Windows service
 
+To deploy what is on `main` to an existing install, run in an **elevated PowerShell**
+from the checkout. It waits for CI to publish that commit's release, then installs it
+with checksum verification and shows `/health`:
+
+```powershell
+git pull; .\scripts\deploy-windows.ps1
+```
+
+To build locally instead:
+
 Build, then run the installer in an **elevated PowerShell**:
 
 ```powershell
