@@ -165,7 +165,13 @@ func (l *Library) retirePath(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if l.ai != nil {
+		l.ai.statusRevision.Add(1)
+	}
+	return nil
 }
 func (l *Library) retireTree(ctx context.Context, path string) error {
 	rows, err := l.db.QueryContext(ctx, `SELECT path FROM images WHERE path=? OR substr(path,1,length(?)+1)=?||'/'`, path, path, path)

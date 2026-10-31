@@ -26,34 +26,36 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
-	peopleMu          sync.Mutex
-	peopleSummary     *peopleSnapshot
-	peopleBuilding    chan struct{}
-	statusMu          sync.Mutex
-	statusCounts      indexCounts
-	statusCountedAt   time.Time
-	pipeline          aiPipelineStats
-	lib               *Library
-	db, read          *sql.DB // Independent WAL database; never hold catalog connections during inference.
-	ml                *mlClient
-	models            string
-	paused            atomic.Bool
-	mu                sync.Mutex
-	active            string
-	lastError         string
-	lastSuccess       string
-	online            bool
-	textCache         map[string]vector
-	groupCache        map[string]photoGroupSummary
-	searchSlot        chan struct{}
-	suggestionSlot    chan struct{}
-	playMu            sync.Mutex
-	playCache         map[string]playSelection
-	selectionRevision atomic.Uint64
-	refreshCtx        context.Context
-	refreshCancel     context.CancelFunc
-	refreshWG         sync.WaitGroup
-	playRefreshing    bool
+	peopleMu            sync.Mutex
+	peopleSummary       *peopleSnapshot
+	peopleBuilding      chan struct{}
+	statusMu            sync.Mutex
+	statusCounts        indexCounts
+	statusCountedAt     time.Time
+	statusRevision      atomic.Uint64
+	statusCountRevision uint64
+	pipeline            aiPipelineStats
+	lib                 *Library
+	db, read            *sql.DB // Independent WAL database; never hold catalog connections during inference.
+	ml                  *mlClient
+	models              string
+	paused              atomic.Bool
+	mu                  sync.Mutex
+	active              string
+	lastError           string
+	lastSuccess         string
+	online              bool
+	textCache           map[string]vector
+	groupCache          map[string]photoGroupSummary
+	searchSlot          chan struct{}
+	suggestionSlot      chan struct{}
+	playMu              sync.Mutex
+	playCache           map[string]playSelection
+	selectionRevision   atomic.Uint64
+	refreshCtx          context.Context
+	refreshCancel       context.CancelFunc
+	refreshWG           sync.WaitGroup
+	playRefreshing      bool
 }
 
 func newAI(l *Library) (*AI, error) {

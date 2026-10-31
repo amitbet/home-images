@@ -362,7 +362,7 @@ func (l *Library) directoryVariants(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	const limit = 20
-	rows, err := l.read.QueryContext(r.Context(), `SELECT a.id,a.path,a.size_bytes,metadata_json(a.metadata),b.id,b.path,b.size_bytes,metadata_json(b.metadata)
+	rows, err := l.read.QueryContext(r.Context(), `SELECT a.id,a.path,a.size_bytes,metadata_json(a.metadata),b.id,b.path,b.size_bytes,metadata_json(b.metadata),a.file_hash,b.file_hash
  FROM images a JOIN images b ON b.content_id=a.content_id AND b.hash_signature=b.signature
  WHERE a.path>=? COLLATE BINARY AND a.path<? COLLATE BINARY AND b.path>=? COLLATE BINARY AND b.path<? COLLATE BINARY
  AND a.hash_signature=a.signature AND a.content_id IS NOT NULL AND a.file_hash IS NOT NULL AND b.file_hash IS NOT NULL AND a.file_hash!=b.file_hash
@@ -372,14 +372,16 @@ func (l *Library) directoryVariants(w http.ResponseWriter, r *http.Request) erro
 	}
 	defer rows.Close()
 	type pair struct {
-		First  Photo `json:"first"`
-		Second Photo `json:"second"`
+		First      Photo  `json:"first"`
+		Second     Photo  `json:"second"`
+		FirstHash  string `json:"first_hash"`
+		SecondHash string `json:"second_hash"`
 	}
 	items := []pair{}
 	for rows.Next() {
-		var aid, ap, bid, bp, am, bm string
+		var aid, ap, bid, bp, am, bm, ah, bh string
 		var as, bs int64
-		if err = rows.Scan(&aid, &ap, &as, &am, &bid, &bp, &bs, &bm); err != nil {
+		if err = rows.Scan(&aid, &ap, &as, &am, &bid, &bp, &bs, &bm, &ah, &bh); err != nil {
 			return err
 		}
 		var p pair
@@ -389,6 +391,7 @@ func (l *Library) directoryVariants(w http.ResponseWriter, r *http.Request) erro
 		if err = json.Unmarshal([]byte(bm), &p.Second); err != nil {
 			return err
 		}
+		p.FirstHash, p.SecondHash = ah, bh
 		p.First.ID, p.First.Path, p.First.Size = aid, ap, as
 		p.Second.ID, p.Second.Path, p.Second.Size = bid, bp, bs
 		items = append(items, p)

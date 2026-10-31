@@ -3,15 +3,20 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Phone backup · Home Images</title>
+  <script>try{let t=localStorage.getItem("homeImages.theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}</script>
+  <title>Settings · Home Images</title>
   <link rel="icon" href="/favicon.svg">
-  <link rel="stylesheet" href="/app/phone-backup.css?v=1">
+  <link rel="stylesheet" href="/app/phone-backup.css?v=2">
   <script src="/app/phone-backup.js?v=1" defer></script>
+  <script src="/app/settings.js" defer></script>
 </head>
 <body>
 <main>
-  <nav><a href="/">▧ Home Images</a><span>Settings / Phone backup</span></nav>
-  <header><p class="eyebrow">YOUR PHOTOS, AT HOME</p><h1>Phone backup</h1><p class="intro">Bring your camera roll home. Automatic backups with the free, open source Syncthing-Fork app for Android.</p></header>
+  <nav class="top-nav"><a href="/" class="back-link">&#8592; Back to Home Images</a><span>Settings</span></nav>
+  <div class="settings-layout">
+    <nav class="settings-nav" aria-label="Settings sections"><h2>Settings</h2><button type="button" id="settingsPhone" aria-controls="phonePanel" aria-current="page">Phone backup</button><button type="button" id="settingsAppearance" aria-controls="appearancePanel">Appearance</button></nav>
+    <div class="settings-content"><section id="phonePanel" aria-labelledby="phoneTitle">
+  <header><p class="eyebrow">YOUR PHOTOS, AT HOME</p><h1 id="phoneTitle">Phone backup</h1><p class="intro">Bring your camera roll home. Automatic backups with the free, open source Syncthing-Fork app for Android.</p></header>
   <p id="message" role="status" aria-live="polite"></p>
   <section class="receiver" aria-label="Backup receiver">
     <div><h2><span id="dot" class="dot"></span> <span id="receiverState">Checking receiver…</span></h2><p id="receiverDetail">Connecting to Home Images</p></div>
@@ -38,6 +43,8 @@
   <section class="card" aria-labelledby="requestsTitle"><div class="section-heading"><div><p class="eyebrow">PAIRING</p><h2 id="requestsTitle">Waiting for approval</h2></div><button id="refresh">Refresh</button></div><div id="requests"><p class="muted">Phone and folder requests will appear here.</p></div></section>
   <section class="card" aria-labelledby="phonesTitle"><p class="eyebrow">YOUR DEVICES</p><h2 id="phonesTitle">Connected phones</h2><div id="phones"><p class="muted">No phones connected yet.</p></div></section>
   <footer><strong>Your archive stays yours.</strong> Completed photos and videos are copied into <strong>Phone backups</strong> in your library. Deleting files on a phone or removing its connection keeps archived copies. Wait for the folder to finish syncing and check its last backup here before deleting anything.</footer>
+    </section><section id="appearancePanel" aria-labelledby="appearanceTitle" hidden><header><p class="eyebrow">PERSONALIZE</p><h1 id="appearanceTitle">Appearance</h1><p class="intro">Choose how Home Images looks on this device.</p></header><div class="card"><h2>Theme</h2><div class="theme-options"><button type="button" id="themeLight" aria-pressed="false">Light</button><button type="button" id="themeDark" aria-pressed="false">Dark</button></div></div></section></div>
+  </div>
 </main>
 </body>
 </html>

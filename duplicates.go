@@ -106,6 +106,11 @@ func (l *Library) quarantinePair(r *http.Request, keepID, removeID string) (map[
 	return l.quarantinePairExpected(r, keepID, removeID, "")
 }
 func (l *Library) quarantinePairExpected(r *http.Request, keepID, removeID, expected string, expectedPaths ...string) (map[string]any, error) {
+	return l.quarantinePairReviewed(r, keepID, removeID, expected, "", expectedPaths...)
+}
+
+// A nonempty keep hash authorizes a reviewed image-data match with different file bytes.
+func (l *Library) quarantinePairReviewed(r *http.Request, keepID, removeID, expected, expectedKeep string, expectedPaths ...string) (map[string]any, error) {
 	if keepID == removeID || keepID == "" || removeID == "" {
 		return nil, bad(400, "Choose a copy to keep and a different copy to move to Trash")
 	}
@@ -122,7 +127,10 @@ func (l *Library) quarantinePairExpected(r *http.Request, keepID, removeID, expe
 	if len(expectedPaths) == 2 && (keep.Path != expectedPaths[0] || remove.Path != expectedPaths[1]) {
 		return nil, bad(409, "File paths changed after review")
 	}
-	if kh != rh || (expected != "" && kh != expected) {
+	if expectedKeep != "" && (kh != expectedKeep || rh != expected) {
+		return nil, bad(409, "A reviewed file changed; compare the files again")
+	}
+	if expectedKeep == "" && (kh != rh || (expected != "" && kh != expected)) {
 		return nil, bad(409, "These files are not exact duplicates. Their metadata or image data differs.")
 	}
 	raw := make([]byte, 16)
@@ -136,7 +144,7 @@ func (l *Library) quarantinePairExpected(r *http.Request, keepID, removeID, expe
 	}
 	dest := dir + "/" + remove.Filename
 	// Write the recovery record before moving the file; it survives a crash.
-	_, err = l.db.ExecContext(r.Context(), "INSERT INTO duplicate_quarantine(token,image_id,path,quarantine_path,created_at,keep_id,file_hash) VALUES(?,?,?,?,?,?,?)", token, remove.ID, remove.Path, dest, time.Now().UTC().Format(time.RFC3339), keep.ID, kh)
+	_, err = l.db.ExecContext(r.Context(), "INSERT INTO duplicate_quarantine(token,image_id,path,quarantine_path,created_at,keep_id,file_hash,keep_file_hash) VALUES(?,?,?,?,?,?,?,?)", token, remove.ID, remove.Path, dest, time.Now().UTC().Format(time.RFC3339), keep.ID, rh, kh)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +240,9 @@ func (l *Library) restoreDuplicate(w http.ResponseWriter, r *http.Request) error
 	if err = l.storePhoto(r.Context(), photo, fmt.Sprintf("go1:%d:%d", info.Size(), info.ModTime().UnixNano())); err != nil {
 		return err
 	}
+	if l.ai != nil {
+		l.ai.statusRevision.Add(1)
+	}
 	_, err = l.db.ExecContext(r.Context(), "DELETE FROM duplicate_quarantine WHERE token=?", body.Token)
 	if err != nil {
 		return err
@@ -248,14 +259,14 @@ func (l *Library) purgeDuplicate(w http.ResponseWriter, r *http.Request) error {
 	}
 	l.scanMu.Lock()
 	defer l.scanMu.Unlock()
-	var dest, keep, expected string
-	if err := l.db.QueryRowContext(r.Context(), "SELECT quarantine_path,coalesce(keep_id,''),coalesce(file_hash,'') FROM duplicate_quarantine WHERE token=?", body.Token).Scan(&dest, &keep, &expected); err != nil {
+	var dest, keep, expected, keepHash string
+	if err := l.db.QueryRowContext(r.Context(), "SELECT quarantine_path,coalesce(keep_id,''),coalesce(file_hash,''),coalesce(keep_file_hash,file_hash,'') FROM duplicate_quarantine WHERE token=?", body.Token).Scan(&dest, &keep, &expected, &keepHash); err != nil {
 		return bad(404, "Copy not found in Trash")
 	}
 	if expected == "" || keep == "" {
 		return bad(409, "This recovery record cannot authorize permanent deletion")
 	}
-	if _, hash, err := l.liveFileHash(r, keep); err != nil || hash != expected {
+	if _, hash, err := l.liveFileHash(r, keep); err != nil || hash != keepHash {
 		return bad(409, "Retained original is missing or changed; permanent deletion refused")
 	}
 	f, err := l.root.Open(filepath.FromSlash(dest))

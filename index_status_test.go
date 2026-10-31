@@ -62,3 +62,32 @@ func TestPausedPeopleWarmingDoesNotWaitForDatabase(t *testing.T) {
 		t.Fatal("paused warmer attempted a database query")
 	}
 }
+
+func TestIndexCountsRefreshWhenFilesMoveToTrash(t *testing.T) {
+	l, s, _ := bulkFixture(t)
+	ctx := context.Background()
+	before, err := l.ai.countIndex(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := previewBatch(t, s)
+	startBatchTest(t, l, s, id, "quarantine")
+	if done, failed := waitBatch(t, l, id); done != 2 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	after, err := l.ai.countIndex(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.total != before.total-2 {
+		t.Fatalf("trash did not update total: before %d after %d", before.total, after.total)
+	}
+	restore := startBatchTest(t, l, s, id, "restore")
+	if done, failed := waitBatch(t, l, restore); done != 2 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	restored, err := l.ai.countIndex(ctx)
+	if err != nil || restored.total != before.total {
+		t.Fatalf("restore total %d expected %d: %v", restored.total, before.total, err)
+	}
+}

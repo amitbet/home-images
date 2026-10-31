@@ -497,3 +497,124 @@ func TestDirectoryVariantsShowDifferentFilesWithSameImageData(t *testing.T) {
 		t.Fatalf("nested folders accepted: %d", w.Code)
 	}
 }
+
+func TestReviewedVariantsMoveRestoreAndPurge(t *testing.T) {
+	l, s, root := bulkFixture(t)
+	prepare := func() (string, string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/variants?a=bulk%2FA&b=bulk%2FB", nil))
+		var result struct {
+			Items []struct {
+				First      Photo  `json:"first"`
+				Second     Photo  `json:"second"`
+				FirstHash  string `json:"first_hash"`
+				SecondHash string `json:"second_hash"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || len(result.Items) == 0 {
+			t.Fatal(w.Body.String(), err)
+		}
+		pair := result.Items[0]
+		payload, _ := json.Marshal(map[string]any{"a": "bulk/A", "b": "bulk/B", "items": []any{map[string]string{"keep": pair.Second.ID, "remove": pair.First.ID, "keep_path": pair.Second.Path, "remove_path": pair.First.Path, "keep_hash": pair.SecondHash, "remove_hash": pair.FirstHash}}})
+		r := httptest.NewRequest("POST", "/api/duplicates/variants-plan", strings.NewReader(string(payload)))
+		r.Header.Set("X-Home-Images", "1")
+		w = httptest.NewRecorder()
+		s.Config.Handler.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		var out struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.ID, pair.First.Path
+	}
+	id, path := prepare()
+	startBatchTest(t, l, s, id, "quarantine")
+	if done, failed := waitBatch(t, l, id); done != 1 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); !os.IsNotExist(err) {
+		t.Fatalf("variant still present: %v", err)
+	}
+	restore := startBatchTest(t, l, s, id, "restore")
+	if done, failed := waitBatch(t, l, restore); done != 1 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	hashFixture(t, l)
+	id, _ = prepare()
+	startBatchTest(t, l, s, id, "quarantine")
+	if done, failed := waitBatch(t, l, id); done != 1 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+	purge := startBatchTest(t, l, s, id, "purge")
+	if done, failed := waitBatch(t, l, purge); done != 1 || failed != 0 {
+		t.Fatal(done, failed)
+	}
+}
+
+func TestReviewedVariantsRejectStaleAndConflictingSelections(t *testing.T) {
+	l, s, root := bulkFixture(t)
+	w := httptest.NewRecorder()
+	s.Config.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/duplicates/variants?a=bulk%2FA&b=bulk%2FB", nil))
+	var out struct {
+		Items []struct {
+			First      Photo  `json:"first"`
+			Second     Photo  `json:"second"`
+			FirstHash  string `json:"first_hash"`
+			SecondHash string `json:"second_hash"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Items) == 0 {
+		t.Fatal(w.Body.String(), err)
+	}
+	p := out.Items[0]
+	item := map[string]string{"keep": p.Second.ID, "remove": p.First.ID, "keep_path": p.Second.Path, "remove_path": p.First.Path, "keep_hash": p.SecondHash, "remove_hash": p.FirstHash}
+	post := func(items []map[string]string) (int, string) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"a": "bulk/A", "b": "bulk/B", "items": items})
+		r := httptest.NewRequest("POST", "/api/duplicates/variants-plan", strings.NewReader(string(raw)))
+		r.Header.Set("X-Home-Images", "1")
+		w := httptest.NewRecorder()
+		s.Config.Handler.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	reverse := map[string]string{"keep": p.First.ID, "remove": p.Second.ID, "keep_path": p.First.Path, "remove_path": p.Second.Path, "keep_hash": p.FirstHash, "remove_hash": p.SecondHash}
+	if code, _ := post([]map[string]string{item, reverse}); code != 400 {
+		t.Fatal("conflicting choices accepted", code)
+	}
+	stale := map[string]string{}
+	for k, v := range item {
+		stale[k] = v
+	}
+	stale["keep_hash"] = "sha256:stale"
+	if code, _ := post([]map[string]string{stale}); code != 409 {
+		t.Fatal("stale review accepted", code)
+	}
+	code, body := post([]map[string]string{item})
+	if code != 200 {
+		t.Fatal(code, body)
+	}
+	var plan struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal([]byte(body), &plan)
+	f, err := os.OpenFile(filepath.Join(root, filepath.FromSlash(p.Second.Path)), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Write([]byte("changed")); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	startBatchTest(t, l, s, plan.ID, "quarantine")
+	if done, failed := waitBatch(t, l, plan.ID); done != 0 || failed != 1 {
+		t.Fatalf("changed retained file: %d done, %d failed", done, failed)
+	}
+	if _, err = os.Stat(filepath.Join(root, filepath.FromSlash(p.First.Path))); err != nil {
+		t.Fatal("selected variant was moved despite stale pair", err)
+	}
+}

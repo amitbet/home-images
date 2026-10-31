@@ -86,7 +86,8 @@ type indexCounts struct {
 func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
 	a.statusMu.Lock()
 	defer a.statusMu.Unlock()
-	if time.Since(a.statusCountedAt) < 10*time.Second {
+	revision := a.statusRevision.Load()
+	if revision == a.statusCountRevision && time.Since(a.statusCountedAt) < 10*time.Second {
 		return a.statusCounts, nil
 	}
 	var counts indexCounts
@@ -101,7 +102,7 @@ func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
 	if err := a.read.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT f.person_id) FROM faces f INDEXED BY face_person CROSS JOIN ai_images a INDEXED BY ai_status ON a.image_id=f.image_id CROSS JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&counts.faces, &counts.people); err != nil {
 		return counts, err
 	}
-	a.statusCounts, a.statusCountedAt = counts, time.Now()
+	a.statusCounts, a.statusCountedAt, a.statusCountRevision = counts, time.Now(), revision
 	return counts, nil
 }
 

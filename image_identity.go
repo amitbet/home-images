@@ -57,7 +57,7 @@ func ensureImageIdentitySchema(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, column := range []string{"keep_id", "file_hash"} {
+	for _, column := range []string{"keep_id", "file_hash", "keep_file_hash"} {
 		var n int
 		if err = tx.QueryRow("SELECT count(*) FROM pragma_table_info('duplicate_quarantine') WHERE name=?", column).Scan(&n); err != nil {
 			return err

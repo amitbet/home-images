@@ -24,6 +24,16 @@ func (l *Library) ensureDuplicateBatchSchema() error {
  CREATE INDEX IF NOT EXISTS duplicate_batch_token ON duplicate_batch_items(token);
  UPDATE duplicate_batches SET state='interrupted' WHERE state='running';
  UPDATE duplicate_batches SET state='cancelled' WHERE state='cancelling';`)
+	if err != nil {
+		return err
+	}
+	var n int
+	if err = l.db.QueryRow("SELECT count(*) FROM pragma_table_info('duplicate_batch_items') WHERE name='keep_file_hash'").Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		_, err = l.db.Exec("ALTER TABLE duplicate_batch_items ADD COLUMN keep_file_hash TEXT NOT NULL DEFAULT ''")
+	}
 	return err
 }
 func batchID() (string, error) {
@@ -345,8 +355,8 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 	for ctx.Err() == nil {
 		var sequence int
 		var item duplicatePlanItem
-		var token string
-		err := l.db.QueryRowContext(ctx, `SELECT sequence,remove_id,keep_id,file_hash,remove_path,keep_path,size_bytes,token FROM duplicate_batch_items WHERE batch_id=? AND state='pending' ORDER BY sequence LIMIT 1`, id).Scan(&sequence, &item.RemoveID, &item.KeepID, &item.Hash, &item.RemovePath, &item.KeepPath, &item.Size, &token)
+		var token, keepHash string
+		err := l.db.QueryRowContext(ctx, `SELECT sequence,remove_id,keep_id,file_hash,remove_path,keep_path,size_bytes,token,keep_file_hash FROM duplicate_batch_items WHERE batch_id=? AND state='pending' ORDER BY sequence LIMIT 1`, id).Scan(&sequence, &item.RemoveID, &item.KeepID, &item.Hash, &item.RemovePath, &item.KeepPath, &item.Size, &token, &keepHash)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				state = "interrupted"
@@ -385,7 +395,7 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 					err = ke
 				} else {
 					var result map[string]any
-					result, err = l.quarantinePairExpected(request, item.KeepID, item.RemoveID, item.Hash, item.KeepPath, item.RemovePath)
+					result, err = l.quarantinePairReviewed(request, item.KeepID, item.RemoveID, item.Hash, keepHash, item.KeepPath, item.RemovePath)
 					if err == nil {
 						token, _ = result["token"].(string)
 					}
@@ -453,4 +463,98 @@ func (l *Library) resumeInterruptedTrashJobs() error {
 		l.launchDuplicateBatch(id, "quarantine")
 	}
 	return nil
+}
+
+// previewVariantCleanup records the exact versions chosen by the user. No file
+// is moved until the resulting plan is explicitly started.
+func (l *Library) previewVariantCleanup(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		A     string `json:"a"`
+		B     string `json:"b"`
+		Items []struct {
+			Keep       string `json:"keep"`
+			Remove     string `json:"remove"`
+			KeepPath   string `json:"keep_path"`
+			RemovePath string `json:"remove_path"`
+			KeepHash   string `json:"keep_hash"`
+			RemoveHash string `json:"remove_hash"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		return bad(400, "Invalid request")
+	}
+	a, err := cleanOverlapDir(body.A)
+	if err != nil {
+		return err
+	}
+	b, err := cleanOverlapDir(body.B)
+	if err != nil {
+		return err
+	}
+	if !disjointDirectories(a, b) || len(body.Items) == 0 || len(body.Items) > 1000 {
+		return bad(400, "Choose between 1 and 1,000 reviewed file pairs in separate folders")
+	}
+	removed := map[string]bool{}
+	kept := map[string]bool{}
+	for _, item := range body.Items {
+		if item.Keep == "" || item.Remove == "" || item.Keep == item.Remove || removed[item.Remove] {
+			return bad(400, "A file can only be moved once")
+		}
+		removed[item.Remove] = true
+		kept[item.Keep] = true
+	}
+	for id := range removed {
+		if kept[id] {
+			return bad(400, "A file cannot be both kept and moved; resolve conflicting selections")
+		}
+	}
+	type selected struct {
+		remove, keep, hash, keepHash, removePath, keepPath string
+		size                                               int64
+	}
+	entries := make([]selected, 0, len(body.Items))
+	var totalBytes int64
+	for _, item := range body.Items {
+		var x selected
+		var removeContent, keepContent string
+		err = l.read.QueryRowContext(r.Context(), `SELECT m.path,m.size_bytes,m.file_hash,m.content_id,k.path,k.file_hash,k.content_id FROM images m JOIN images k ON k.id=? WHERE m.id=? AND m.hash_signature=m.signature AND k.hash_signature=k.signature AND m.file_hash IS NOT NULL AND k.file_hash IS NOT NULL AND m.content_id IS NOT NULL AND k.content_id IS NOT NULL`, item.Keep, item.Remove).Scan(&x.removePath, &x.size, &x.hash, &removeContent, &x.keepPath, &x.keepHash, &keepContent)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return bad(409, "A selected file is no longer available; compare again")
+			}
+			return err
+		}
+		if x.hash != item.RemoveHash || x.keepHash != item.KeepHash || x.removePath != item.RemovePath || x.keepPath != item.KeepPath || removeContent != keepContent || x.hash == x.keepHash || !((directoryContains(a, x.removePath) && directoryContains(b, x.keepPath)) || (directoryContains(b, x.removePath) && directoryContains(a, x.keepPath))) {
+			return bad(409, "A selected pair changed or no longer matches; compare again")
+		}
+		x.remove, x.keep = item.Remove, item.Keep
+		totalBytes += x.size
+		entries = append(entries, x)
+	}
+	id, err := batchID()
+	if err != nil {
+		return err
+	}
+	summary, err := json.Marshal(map[string]any{"source": a + " and " + b, "keep": "selected images", "bytes": totalBytes})
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := l.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(r.Context(), "INSERT INTO duplicate_batches VALUES(?,'quarantine','preview',?,?,?)", id, string(summary), now, now); err != nil {
+		return err
+	}
+	for i, x := range entries {
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO duplicate_batch_items(batch_id,sequence,remove_id,keep_id,file_hash,keep_file_hash,remove_path,keep_path,size_bytes) VALUES(?,?,?,?,?,?,?,?,?)`, id, i, x.remove, x.keep, x.hash, x.keepHash, x.removePath, x.keepPath, x.size); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return writeJSON(w, 200, map[string]any{"id": id, "count": len(entries), "bytes": totalBytes})
 }
