@@ -314,3 +314,24 @@ func TestHiddenFaceEndpoints(t *testing.T) {
 		t.Fatal("explicit hidden thumbnail unavailable", resp.Status)
 	}
 }
+
+func TestPlaybackPeopleAnyAndNone(t *testing.T) {
+	l, s, _ := fixture(t)
+	ctx := context.Background()
+	if err := l.ai.save(ctx, testJob(t, l, "a.jpg"), syntheticPrediction()); err != nil {
+		t.Fatal(err)
+	}
+	empty := syntheticPrediction()
+	empty.Faces = nil
+	if err := l.ai.save(ctx, testJob(t, l, "b.jpg"), empty); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if p := getPlayback(t, s, "order=random&group_kind=people&group_key=any"); p.Path != "a.jpg" {
+			t.Fatal("photo without faces returned for any", p.Path)
+		}
+		if p := getPlayback(t, s, "order=random&group_kind=people&group_key=none"); p.Path == "a.jpg" {
+			t.Fatal("photo with faces returned for none")
+		}
+	}
+}

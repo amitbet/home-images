@@ -119,7 +119,10 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 			clause += " AND CASE WHEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND substr(coalesce(nullif(taken_at,''),created_at),6,2) BETWEEN '01' AND '12' THEN replace(substr(coalesce(nullif(taken_at,''),created_at),1,7),':','-') ELSE 'Unknown month' END = ?"
 			args = append(args, key)
 		case "people":
-			if key == "none" {
+			if key == "any" {
+				clause += " AND EXISTS(SELECT 1 FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.image_id=i.id AND ai.signature=i.signature AND ai.models=? AND ai.error='')"
+				args = append(args, a.models)
+			} else if key == "none" {
 				clause += " AND NOT EXISTS(SELECT 1 FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id WHERE f.image_id=i.id AND ai.signature=i.signature AND ai.models=? AND ai.error='')"
 				args = append(args, a.models)
 			} else {

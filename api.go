@@ -391,7 +391,7 @@ const apiDocs = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name
 <li><a href="/api/directories">GET /api/directories</a>?directory=ALBUM&amp;offset=0&amp;limit=100</li>
 <li><a href="/api/images?limit=5">GET /api/images</a>?directory=ALBUM&amp;recursive=true&amp;q=Paris&amp;offset=0&amp;limit=50</li>
 <li><a href="/api/next?mode=random">GET /api/next</a>?mode=random|sequential&amp;directory=ALBUM&amp;recursive=true&amp;after=PREVIOUS_ID&amp;q=Paris</li>
-<li><a href="/api/playback/next?order=random">GET /api/playback/next</a>?order=random|sequential&amp;mode=semantic|metadata&amp;q=beach&amp;person=12&amp;album=3&amp;collection=7&amp;after=PREVIOUS_ID — album/search playback; semantic pool defaults to top 500 matches, cached for 120 seconds.</li>
+<li><a href="/api/playback/next?order=random">GET /api/playback/next</a>?order=random|sequential&amp;mode=semantic|metadata&amp;q=beach&amp;person=12&amp;group_kind=people&amp;group_key=any|none&amp;album=3&amp;collection=7&amp;after=PREVIOUS_ID — album/search playback; semantic pool defaults to top 500 matches, cached for 120 seconds. <code>group_key=any</code> plays only photos with detected faces; <code>none</code> only photos without.</li>
 <li><a href="/api/people">GET /api/people</a> — named face groups; POST /api/people/{id} with name or merge_into.</li>
 <li><a href="/api/indexing">GET /api/indexing</a> — AI progress; POST /api/indexing/control with action pause, resume or retry.</li>
 <li>GET/POST /api/curation/{id} — favorites, hidden state, title, description, location and tags. GET/POST /api/albums and /api/collections — virtual albums and saved search rules. Writes require JSON, X-Home-Images: 1 and same-origin browser requests.</li>

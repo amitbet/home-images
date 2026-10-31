@@ -454,7 +454,11 @@ object; existing photo clients can ignore the additional fields. Use the returne
 /api/playback/next?mode=semantic&q=beach&person=12&order=sequential
 /api/playback/next?mode=metadata&q=Paris&favorite=true&order=random
 /api/playback/next?collection=7&order=sequential
+/api/playback/next?group_kind=people&group_key=any&order=random
 ```
+
+`group_kind=people&group_key=any` plays only photos with at least one detected
+face in the current AI index; `group_key=none` plays only photos without one.
 
 - `order=random|sequential` defaults to `random`. Sequential wraps at the end;
   random avoids the previous ID whenever another current match is available.
