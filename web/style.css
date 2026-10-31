@@ -685,6 +685,7 @@ textarea::placeholder {
   min-width: 0;
 }
 .photo-open {
+  position: relative;
   display: block;
   width: 100%;
   border-radius: var(--radius);
@@ -1792,3 +1793,6 @@ dialog::backdrop {
 #shuffle, #play { font-size: 22px; line-height: 1; min-width: 42px; justify-content: center; }
 
 .viewer-bottom .image-path { max-width: min(60vw, 800px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6e7ee; }
+
+.viewer-stage #fullVideo { max-width: 100%; max-height: 100%; }
+.video-badge { position: absolute; bottom: 8px; left: 8px; padding: 3px 7px; border-radius: 4px; background: #000b; color: white; }

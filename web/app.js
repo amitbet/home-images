@@ -137,6 +137,7 @@ function previewImage(img, url) {
 }
 const fields = {
   directory: "directory",
+  media_type: "mediaType",
   from: "dateFrom",
   to: "dateTo",
   place: "place",
@@ -453,7 +454,9 @@ function filterChips() {
     if ($(id).value)
       chips.push({
         label:
-          (key === "directory"
+          (key === "media_type"
+            ? "Type"
+            : key === "directory"
             ? "Folder"
             : key === "from"
               ? "From"
@@ -621,6 +624,7 @@ function renderPhotos(start = 0) {
     open.setAttribute("aria-label", "View " + (a.title || displayFilename(photo.filename)));
     const img = new Image();
     previewImage(img, "/api/images/" + photo.id + "/thumbnail");
+    if (photo.format === "VIDEO") open.append(text("span", "▶ Video", "video-badge"));
     img.alt = a.title || displayFilename(photo.filename);
     img.loading = "lazy";
     img.decoding = "async";
@@ -1453,7 +1457,7 @@ function clearViewerPreview(keepURL = null) {
 function preloadNext(photo, gen, external) {
   if (gen !== state.viewerGeneration || !$("viewer").open) return;
   const warm = (next) => {
-    if (!next || next.id === photo.id || gen !== state.viewerGeneration || !$("viewer").open) return;
+    if (!next || next.format === "VIDEO" || next.id === photo.id || gen !== state.viewerGeneration || !$("viewer").open) return;
     const url = viewerURL(next);
     if (nextPreview?.url === url) return;
     nextPreview?.controller.abort();
@@ -1531,14 +1535,23 @@ async function openImage(i, external = null) {
   const a = state.annotations[photo.id] || {};
   $("fullImage").alt = a.title || displayFilename(photo.filename);
   modal("viewer");
-  showViewerPreview(photo, gen, external);
+  const video = $("fullVideo"), isVideo = photo.format === "VIDEO";
+  video.pause(); video.removeAttribute("src"); video.load();
+  video.hidden = !isVideo; $("fullImage").hidden = isVideo;
+  if (isVideo) {
+    if (state.playing) stopPlay();
+    clearViewerPreview();
+    video.src = photo.original_url;
+    video.load();
+    preloadNext(photo, gen, external);
+  } else showViewerPreview(photo, gen, external);
   $("viewerBack").textContent="\u2190";
   $("imagePath").textContent = photo.path || [photo.directory, photo.filename].filter(Boolean).join("/");
   $("imagePath").title = $("imagePath").textContent;
   $("imageMeta").textContent = [
     date(photo),
     a.location || a.auto_location,
-    `${photo.width} × ${photo.height}`,
+    photo.width && photo.height ? `${photo.width} × ${photo.height}` : (photo.format === "VIDEO" ? "Video" : ""),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1958,6 +1971,7 @@ async function advance(direction, auto = false) {
 }
 $("viewer").addEventListener("close", () => {
   state.viewerGeneration++;
+  $("fullVideo").pause(); $("fullVideo").removeAttribute("src"); $("fullVideo").load();
   clearViewerPreview();
   pumpThumbnails();
   const display = $("fullImage");

@@ -207,6 +207,16 @@ func (l *Library) selection(r *http.Request) (string, []any, error) {
 		clause += ` AND (search LIKE ? ESCAPE '!' OR id IN(SELECT image_id FROM curation.annotations WHERE root=? AND lower(title||' '||description||' '||location||' '||tags) LIKE ? ESCAPE '!'))`
 		args = append(args, pattern, l.rootPath, pattern)
 	}
+	photoPredicate := strings.ReplaceAll(photoOnlySQL, "i.path", "path")
+	switch r.URL.Query().Get("media_type") {
+	case "", "all":
+	case "images":
+		clause += " AND (" + photoPredicate + ")"
+	case "videos":
+		clause += " AND NOT (" + photoPredicate + ")"
+	default:
+		return "", nil, bad(422, "Invalid media_type")
+	}
 	return l.curationSelection(r, clause, args)
 }
 func (l *Library) images(w http.ResponseWriter, r *http.Request) error {
@@ -253,6 +263,7 @@ func (l *Library) next(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	clause += " AND " + strings.ReplaceAll(photoOnlySQL, "i.path", "path")
 	mode := r.URL.Query().Get("mode")
 	if mode == "" {
 		mode = "random"

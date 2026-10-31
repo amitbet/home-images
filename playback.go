@@ -317,6 +317,7 @@ func (a *AI) playbackNext(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	clause += " AND " + photoOnlySQL
 	after := query.Get("after")
 	limit := 0
 	if mode == "semantic" {

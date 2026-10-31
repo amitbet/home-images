@@ -292,7 +292,20 @@ func (l *Library) Run(ctx context.Context) {
 		}
 	}
 }
+func isVideo(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".m4v", ".mov", ".webm", ".ogv":
+		return true
+	}
+	return false
+}
+
+const photoOnlySQL = `lower(substr(i.path,-4)) NOT IN ('.mp4','.m4v','.mov','.ogv') AND lower(substr(i.path,-5))!='.webm'`
+
 func supported(path string) bool {
+	if isVideo(path) {
+		return true
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif":
 		return true

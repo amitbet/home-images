@@ -69,6 +69,10 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 		created := ts.BirthTime().UTC().Format(time.RFC3339Nano)
 		p.CreatedAt = &created
 	}
+	if isVideo(relative) {
+		p.Format = "VIDEO"
+		return p, nil
+	}
 	// Metadata is optional. Missing/broken EXIF does not exclude an otherwise decodable photo.
 	ex, _ := imagemeta.Decode(f)
 	var raw *rawexif.Exif
@@ -211,6 +215,9 @@ func (l *Library) renderJPEG(ctx context.Context, p Photo, width, height, qualit
 	if err != nil {
 		return nil, bad(422, "Image cannot be decoded")
 	}
+	if isVideo(p.Path) {
+		return videoThumbnail(width, height, quality)
+	}
 	if isHEIC(p.Path) {
 		ffmpeg, e := exec.LookPath(l.config.FFmpeg)
 		if e != nil {
@@ -307,3 +314,27 @@ func orient(img image.Image, orientation int) image.Image {
 }
 
 func fileAvailable(path string) bool { info, e := os.Stat(path); return e == nil && info.IsDir() }
+
+// videoThumbnail is available even when FFmpeg is not installed.
+func videoThumbnail(width, height, quality int) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{R: 42, G: 49, B: 59, A: 255}}, image.Point{}, draw.Src)
+	size := min(width, height) / 4
+	cx, cy := width/2, height/2
+	for y := -size; y <= size; y++ {
+		for x := -size / 2; x <= size/2; x++ {
+			if x+size/2 <= (size - absInt(y)) {
+				img.Set(cx+x, cy+y, color.White)
+			}
+		}
+	}
+	var out bytes.Buffer
+	err := jpeg.Encode(&out, img, &jpeg.Options{Quality: quality})
+	return out.Bytes(), err
+}
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}

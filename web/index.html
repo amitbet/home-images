@@ -160,6 +160,11 @@
           </div>
         </div>
         <div class="filter-field">
+          <label for="mediaType">Type</label>
+          <select id="mediaType"><option value="">Images and videos</option><option value="images">Images</option><option value="videos">Videos</option></select>
+          <small>Content search indexes images only. Use Files &amp; metadata to search videos.</small>
+        </div>
+        <div class="filter-field">
           <label for="dateFrom">Taken from</label
           ><input id="dateFrom" type="date" />
         </div>
@@ -262,7 +267,7 @@
               aria-label="Previous image"
             >
               ‹</button
-            ><img id="fullImage" alt="" /><div
+            ><img id="fullImage" alt="" /><video id="fullVideo" controls playsinline hidden></video><div
               id="faceLayer"
               class="face-layer"
               hidden

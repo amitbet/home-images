@@ -16,7 +16,7 @@ Features:
 - Embedded photo browser with content search and editable named face groups.
 - Optional Android backups through a managed Syncthing receiver and Syncthing-Fork QR pairing.
 - Optional remote Immich ML inference; no Docker or ML runtime required on this server.
-- Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews.
+- Native JPEG, PNG, GIF, BMP, TIFF, and WebP decoding. Optional **FFmpeg 8.1+** for HEIC/HEIF previews. Browse and play MP4, M4V, MOV, WebM, and OGV videos in the UI when their codecs are supported by the browser; video thumbnails use a placeholder. Use the Type filter to show images, videos, or both. Content search indexes images only; use Files & metadata to search videos. Picture-frame playback remains photo-only.
 - Bounded rendering concurrency/pixel counts, root-confined file handles, graceful shutdown, and rotating logs.
 
 ## Android phone backup
@@ -64,7 +64,7 @@ phone's last backup and wait for sync/import completion before deleting original
 This retains **both staging and archive copies**, so allow disk space for both.
 Removing a phone or disabling backup preserves its archive, staging files and
 identity; it does not uninstall or stop any other Syncthing installation.
-Videos and camera sidecars are archived even where the gallery cannot display them.
+Videos and camera sidecars are archived, including formats the gallery cannot display.
 
 The service needs write access to `root/Phone backups` only. Updated installers
 create that directory and grant its service account access, while retaining

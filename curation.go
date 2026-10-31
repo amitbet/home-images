@@ -378,7 +378,7 @@ func (a *AI) editCollection(w http.ResponseWriter, r *http.Request) error {
 		return bad(400, "Provide a name up to 100 characters")
 	}
 	allowed := map[string]bool{}
-	for _, key := range []string{"q", "mode", "directory", "person", "favorite", "hidden", "album", "from", "to", "place", "tag", "on_this_day", "group_by", "sort", "direction", "layout"} {
+	for _, key := range []string{"q", "mode", "directory", "media_type", "person", "favorite", "hidden", "album", "from", "to", "place", "tag", "on_this_day", "group_by", "sort", "direction", "layout"} {
 		allowed[key] = true
 	}
 	for key, val := range body.Query {
