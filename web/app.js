@@ -1455,9 +1455,20 @@ const viewerURL = (photo) => {
 };
 let viewerFetch = null;
 let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null, viewerTransformIdle;
-function setViewerZoom(value) {
+// With an anchor (client coordinates), the image point under it stays put,
+// so wheel zoom heads toward the cursor instead of the image center.
+function setViewerZoom(value, anchor = null) {
+  const previous = viewerZoom, image = $("fullImage");
   viewerZoom = Math.max(1, Math.min(4, value));
-  const image = $("fullImage");
+  if (anchor && viewerZoom !== previous) {
+    // The transform scales around the layout center; the rendered rect's
+    // center is that point shifted by the current pan.
+    const rect = image.getBoundingClientRect(), ratio = viewerZoom / previous;
+    const centerX = rect.left + rect.width / 2 - viewerPanX;
+    const centerY = rect.top + rect.height / 2 - viewerPanY;
+    viewerPanX = anchor.x - centerX - ratio * (anchor.x - centerX - viewerPanX);
+    viewerPanY = anchor.y - centerY - ratio * (anchor.y - centerY - viewerPanY);
+  }
   const maxX = image.clientWidth * (viewerZoom - 1) / 2;
   const maxY = image.clientHeight * (viewerZoom - 1) / 2;
   viewerPanX = Math.round(Math.max(-maxX, Math.min(maxX, viewerPanX)));
@@ -1555,7 +1566,7 @@ function upgradeViewerResolution() {
 }
 document.querySelector(".viewer-stage").addEventListener("wheel",e=>{
   if(!$("viewer").open)return;e.preventDefault();stopPlay();
-  setViewerZoom(viewerZoom*Math.exp(-e.deltaY*(e.deltaMode===1?.04:.002)));
+  setViewerZoom(viewerZoom*Math.exp(-e.deltaY*(e.deltaMode===1?.04:.002)), {x:e.clientX, y:e.clientY});
   if(viewerZoom>1)upgradeViewerResolution();
 },{passive:false});
 let viewerRequest = null, nextPreview = null, playbackPrefetch = null;
