@@ -71,6 +71,7 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 	}
 	if isVideo(relative) {
 		p.Format = "VIDEO"
+		l.probeVideo(ctx, &p)
 		return p, nil
 	}
 	// Metadata is optional. Missing/broken EXIF does not exclude an otherwise decodable photo.
