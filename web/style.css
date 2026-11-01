@@ -1691,7 +1691,7 @@ dialog::backdrop {
 .viewer-stage {overflow:hidden;}
 .viewer-arrow {position:relative;z-index:3;flex-shrink:0;}
 .viewer.zoomed #fullImage {cursor:grab;touch-action:none;}
-.viewer.zoomed #fullImage:active {cursor:grabbing;}
+.viewer.zoomed #fullImage:active, .viewer.panning, .viewer.panning * {cursor:grabbing;}
 .viewer-controls .viewer-button:disabled {opacity:.45;}
 
 .photo-group-heading {grid-column:1 / -1;margin:1rem 0 .25rem;font-size:1.2rem;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding-bottom:.5rem;}

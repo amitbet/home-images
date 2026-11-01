@@ -1454,14 +1454,20 @@ const viewerURL = (photo) => {
   return photo.image_url + `?width=${side}&height=${side}&quality=80`;
 };
 let viewerFetch = null;
-let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null;
+let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null, viewerTransformIdle;
 function setViewerZoom(value) {
   viewerZoom = Math.max(1, Math.min(4, value));
   const image = $("fullImage");
   const maxX = image.clientWidth * (viewerZoom - 1) / 2;
   const maxY = image.clientHeight * (viewerZoom - 1) / 2;
-  viewerPanX = Math.max(-maxX, Math.min(maxX, viewerPanX));
-  viewerPanY = Math.max(-maxY, Math.min(maxY, viewerPanY));
+  viewerPanX = Math.round(Math.max(-maxX, Math.min(maxX, viewerPanX)));
+  viewerPanY = Math.round(Math.max(-maxY, Math.min(maxY, viewerPanY)));
+  // Composite the image on its own layer while it moves: repainting a scaled,
+  // shrinking image in place leaves stale edge lines on the stage in Chrome.
+  // Dropping the hint once idle re-rasterizes it sharply at the final scale.
+  image.style.willChange = "transform";
+  clearTimeout(viewerTransformIdle);
+  viewerTransformIdle = setTimeout(() => { if (!viewerDrag) image.style.willChange = ""; }, 300);
   image.style.transform = `translate(${viewerPanX}px, ${viewerPanY}px) scale(${viewerZoom})`;
   $("viewer").classList.toggle("zoomed", viewerZoom > 1);
   $("zoomReset").textContent = `${Math.round(viewerZoom * 100)}%`;
@@ -1473,18 +1479,35 @@ $("zoomIn").onclick = () => {setViewerZoom(viewerZoom + .25); upgradeViewerResol
 $("zoomOut").onclick = () => setViewerZoom(viewerZoom - .25);
 $("zoomReset").onclick = () => setViewerZoom(1);
 $("fullImage").draggable = false;
-$("fullImage").addEventListener("pointerdown", e => {
-  if (viewerZoom <= 1 || e.button !== 0) return;
-  viewerDrag = {x:e.clientX, y:e.clientY, panX:viewerPanX, panY:viewerPanY};
-  e.currentTarget.setPointerCapture(e.pointerId);e.preventDefault();
-});
-$("fullImage").addEventListener("pointermove", e => {
-  if (!viewerDrag) return;
-  viewerPanX = viewerDrag.panX + e.clientX - viewerDrag.x;
-  viewerPanY = viewerDrag.panY + e.clientY - viewerDrag.y;
-  setViewerZoom(viewerZoom);
-});
-for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) $("fullImage").addEventListener(event, () => {viewerDrag=null;});
+{
+  // Pan a zoomed image by dragging it with the left button, or by holding the
+  // middle (wheel) button anywhere on the stage.
+  const stage = document.querySelector(".viewer-stage");
+  const endPan = () => {
+    if (!viewerDrag) return;
+    viewerDrag = null;
+    $("viewer").classList.remove("panning");
+    setViewerZoom(viewerZoom);
+  };
+  stage.addEventListener("pointerdown", e => {
+    const middle = e.button === 1;
+    if (viewerZoom <= 1 || viewerDrag) return;
+    if (!(middle ? !e.target.closest("button, video") : e.button === 0 && e.target === $("fullImage"))) return;
+    viewerDrag = {id:e.pointerId, x:e.clientX, y:e.clientY, panX:viewerPanX, panY:viewerPanY};
+    stage.setPointerCapture(e.pointerId);
+    $("viewer").classList.add("panning");
+    e.preventDefault();
+  });
+  // Middle-click otherwise starts the browser's autoscroll mode.
+  stage.addEventListener("mousedown", e => { if (e.button === 1 && $("viewer").open) e.preventDefault(); });
+  stage.addEventListener("pointermove", e => {
+    if (!viewerDrag || e.pointerId !== viewerDrag.id) return;
+    viewerPanX = viewerDrag.panX + e.clientX - viewerDrag.x;
+    viewerPanY = viewerDrag.panY + e.clientY - viewerDrag.y;
+    setViewerZoom(viewerZoom);
+  });
+  for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) stage.addEventListener(event, endPan);
+}
 function fetchViewerImage(image, url) {
   image.dataset.requestedResolution = url;
   viewerFetch?.abort();
