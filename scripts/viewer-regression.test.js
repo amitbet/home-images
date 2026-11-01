@@ -7,6 +7,41 @@ const source = fs.readFileSync('web/app.js', 'utf8');
 const viewerSource = source.slice(source.indexOf('function viewerSize('), source.indexOf('async function openImage(')) + source.slice(source.indexOf('function sizeViewerImage('), source.indexOf('window.addEventListener("resize"'));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('viewer history preserves the grid unless its query changes', async () => {
+  let onPopstate, loads = 0, restores = 0, closes = 0;
+  const viewer = { open: false };
+  const query = 'mode=metadata&q=&view=photos&offset=0';
+  const context = vm.createContext({
+    URLSearchParams,
+    window: { addEventListener(type, handler) { onPopstate = handler; } },
+    location: { search: '?' + query },
+    params: () => new URLSearchParams('mode=metadata&q='),
+    state: { view: 'photos', offset: 0, navigation: ['preserved'] },
+    $: () => viewer,
+    closeModal() { viewer.open = false; closes++; },
+    restoreQuery() { restores++; },
+    async load() { loads++; },
+    notice(message) { assert.fail(message); },
+  });
+  vm.runInContext('let restoringNavigation = false, closingViewerForNavigation = false;\n' +
+    source.slice(source.indexOf('function gridNavigationKey('), source.indexOf('function syncURL(')), context);
+  // Esc has already closed the dialog before history.back emits popstate.
+  await onPopstate();
+  assert.equal(loads, 0);
+  assert.equal(restores, 0);
+  assert.equal(context.state.navigation[0], 'preserved');
+  // Browser Back closes the open viewer without rebuilding the same grid too.
+  viewer.open = true;
+  await onPopstate();
+  assert.equal(closes, 1);
+  assert.equal(loads, 0);
+  context.location.search = '?' + query.replace('offset=0', 'offset=60');
+  await onPopstate();
+  assert.equal(loads, 1);
+  assert.equal(restores, 1);
+  assert.equal(context.state.offset, 60);
+});
+
 function harness() {
   const photos = [
     { id: 'portrait', width: 1884, height: 4080, image_url: '/api/images/portrait/image' },

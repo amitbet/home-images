@@ -225,18 +225,30 @@ function writeNavigationURL(url, replace = false) {
     history.pushState({ homeImages: true }, "", url);
   }
 }
+function gridNavigationKey(query) {
+  const p = new URLSearchParams(query);
+  p.delete("image");
+  p.sort();
+  return p.toString();
+}
 window.addEventListener("popstate", async () => {
   const p = new URLSearchParams(location.search);
+  const current = params();
+  current.set("view", state.view);
+  current.set("offset", state.offset);
+  const gridUnchanged = gridNavigationKey(p) === gridNavigationKey(current);
   restoringNavigation = true;
   try {
     if ($("viewer").open) {
       closingViewerForNavigation = true;
       closeModal("viewer");
     }
-    restoreQuery(p);
-    state.offset = Math.max(0, Number(p.get("offset")) || 0);
-    state.navigation = [];
-    await load();
+    if (!gridUnchanged) {
+      restoreQuery(p);
+      state.offset = Math.max(0, Number(p.get("offset")) || 0);
+      state.navigation = [];
+      await load();
+    }
     if (p.get("image")) {
       const photo = await api("/api/images/" + encodeURIComponent(p.get("image")));
       state.annotations[photo.id] = await api("/api/curation/" + photo.id);
