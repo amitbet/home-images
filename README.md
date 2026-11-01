@@ -424,6 +424,16 @@ Do not delete `ai.sqlite3`: it also contains user-assigned people names and merg
 Back up the entire data directory with the service stopped, including curation data.
 
 People are grouped conservatively using representative face-vector similarity.
+The similar-people review uses an HNSW candidate index followed by exact
+similarity scoring. It retains merged representatives and checks current photo
+visibility, dismissals, and same-photo exclusions before returning suggestions.
+`data_dir/people.hnsw` is a disposable cache beside SQLite; missing, corrupt,
+wrong-model, or stale caches rebuild automatically on the next review request.
+The first build can take several minutes for a large library. New representatives
+are added incrementally; merges update group mappings. Embedding replacements
+and deletions rebuild the graph. Cache writes are atomic and throttled to once
+per 30 seconds during requests; SQLite always remains authoritative.
+
 Name groups and merge duplicates in the People page. A higher `face_similarity`
 reduces automatic merging; changes apply to future indexing and do not recluster
 existing photos. Recognition can make mistakes, particularly with children, twins,
@@ -439,6 +449,11 @@ people filters, and ordinary browsing remain usable without the Mac.
   photos, with optional person/directory filters. `mode=metadata` searches literal
   path and EXIF text; an empty query browses the library. Offset is bounded at 1000.
 - `GET /api/people?q=Dana&limit=48&offset=0` lists groups, names and photo counts.
+- `GET /api/people/12/suggestions?limit=25&offset=0&min_score=0.3` returns
+  similar groups. `search_index` is `hnsw`; when `approximate` is true, `total`
+  counts the eligible candidate pool rather than every possible matching group.
+  Selective filters automatically widen the search, up to exhaustive retrieval.
+  Add `exact=true` for exhaustive scoring and exact totals.
 - `POST /api/people/12` accepts `{"name":"Dana"}` or `{"merge_into":34}`.
   Merges retain both representatives for future recognition and cannot be undone
   through the UI. Separate people with the same name are still separate groups.

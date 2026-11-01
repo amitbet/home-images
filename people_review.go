@@ -46,72 +46,91 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		return r.Context().Err()
 	}
 
-	rows, err := a.read.QueryContext(r.Context(), `SELECT coalesce(merged_into,id),embedding FROM people WHERE model=?`, a.lib.config.ML.FaceModel)
+	a.personIndexMu.Lock()
+	defer a.personIndexMu.Unlock()
+	index, err := a.loadPersonHNSW(r.Context())
 	if err != nil {
 		return err
 	}
-	vectors := map[int64][]vector{}
-	for rows.Next() {
-		var key int64
-		var blob []byte
-		if err = rows.Scan(&key, &blob); err != nil {
-			rows.Close()
+	vectors := index.vectors
+	if len(vectors[id]) == 0 {
+		var exists int
+		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM people WHERE id=? AND model=? AND merged_into IS NULL", id, a.lib.config.ML.FaceModel).Scan(&exists); err != nil {
 			return err
 		}
-		vectors[key] = append(vectors[key], vectorBlob(blob))
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if len(vectors[id]) == 0 {
-		return bad(404, "Person not found")
+		if exists == 0 {
+			return bad(404, "Person not found")
+		}
+		return writeJSON(w, 200, map[string]any{"items": []personSuggestion{}, "total": 0, "offset": offset, "has_more": false, "approximate": false, "search_index": "hnsw"})
 	}
 	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
 	if err != nil {
 		return err
 	}
-	args := []any{id, a.models, id, id, id}
-	args = append(args, visibilityArgs...)
-	rows, err = a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
-	if err != nil {
-		return err
+	// Oversample representatives because several can belong to one merged group,
+	// and metadata exclusions are applied afterwards. Expand for selective filters.
+	k := min(len(index.groups), max(1024, 4*(offset+limit)))
+	// Useful for exhaustive review and diagnosing ANN recall without changing
+	// assignments or maintaining a second vector store.
+	if r.URL.Query().Get("exact") == "true" {
+		k = len(index.groups)
 	}
-	defer rows.Close()
-	items := []personSuggestion{}
-	for rows.Next() {
-		var p personSuggestion
-		if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
+	var items []personSuggestion
+	for {
+		candidates, e := index.candidates(r.Context(), id, k)
+		if e != nil {
+			return e
+		}
+		ids, e := json.Marshal(sortedPersonIDs(candidates))
+		if e != nil {
+			return e
+		}
+		args := []any{string(ids), id, a.models, id, id, id}
+		args = append(args, visibilityArgs...)
+		rows, err := a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.id IN(SELECT value FROM json_each(?)) AND p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
+		if err != nil {
 			return err
 		}
-
-		items = append(items, p)
-	}
-	err = rows.Err()
-	rows.Close() // Release SQLite before the CPU-heavy ranking pass.
-	if err != nil {
-		return err
-	}
-	ranked := items[:0]
-	for _, p := range items {
-		for _, v := range vectors[id] {
-			if err := r.Context().Err(); err != nil {
+		items = []personSuggestion{}
+		for rows.Next() {
+			var p personSuggestion
+			if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
+				rows.Close()
 				return err
 			}
-			for _, other := range vectors[p.ID] {
-				if score := similarity(v, other); score > p.Similarity {
-					p.Similarity = score
+
+			items = append(items, p)
+		}
+		err = rows.Err()
+		rows.Close() // Release SQLite before the CPU-heavy ranking pass.
+		if err != nil {
+			return err
+		}
+		ranked := items[:0]
+		for _, p := range items {
+			for _, v := range vectors[id] {
+				if err := r.Context().Err(); err != nil {
+					return err
+				}
+				for _, other := range vectors[p.ID] {
+					if score := similarity(v, other); score > p.Similarity {
+						p.Similarity = score
+					}
 				}
 			}
+			if float64(p.Similarity) < minScore {
+				continue
+			}
+			p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
+
+			ranked = append(ranked, p)
 		}
-		if float64(p.Similarity) < minScore {
-			continue
+		items = ranked
+		if len(items) >= max(64, 2*(offset+limit)) || k >= len(index.groups) {
+			break
 		}
-		p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
-		ranked = append(ranked, p)
+		k = min(len(index.groups), k*2)
 	}
-	items = ranked
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Similarity == items[j].Similarity {
@@ -121,7 +140,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	})
 	total := len(items)
 	items = items[min(offset, total):min(offset+limit, total)]
-	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total})
+	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total, "approximate": k < len(index.groups), "search_index": "hnsw"})
 }
 
 func (a *AI) dismissPerson(w http.ResponseWriter, r *http.Request) error {

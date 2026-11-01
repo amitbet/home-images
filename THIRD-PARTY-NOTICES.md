@@ -6,6 +6,11 @@ The Apache license is included in `third-party-licenses/purego-LICENSE`.
 Purego also incorporates portions of the Go runtime under the Go project's
 BSD-3-Clause license, included in `third-party-licenses/Go-LICENSE`.
 
+The internal HNSW implementation is derived from coder/hnsw v0.6.1,
+https://github.com/coder/hnsw, under CC0-1.0. The license is included in
+`third-party-licenses/hnsw-CC0`; modifications are described in
+`internal/hnsw/README.md` in the source distribution.
+
 Bundled libjpeg-turbo retains its own notices and licenses in
 `turbojpeg-licenses/`.
 

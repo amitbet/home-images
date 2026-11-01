@@ -26,6 +26,8 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
+	personIndexMu       sync.Mutex
+	personIndex         *personHNSW
 	peopleMu            sync.Mutex
 	peopleSummary       *peopleSnapshot
 	peopleBuilding      chan struct{}
@@ -82,6 +84,9 @@ func newAI(l *Library) (*AI, error) {
  CREATE TABLE IF NOT EXISTS person_dismissals(a INTEGER NOT NULL,b INTEGER NOT NULL,PRIMARY KEY(a,b));
  CREATE TABLE IF NOT EXISTS ai_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	if err != nil {
+		return fail(err)
+	}
+	if err = a.initPersonHNSW(); err != nil {
 		return fail(err)
 	}
 	// Per-face embeddings let a manually retagged face teach recognition.
