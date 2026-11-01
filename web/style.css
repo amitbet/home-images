@@ -1821,3 +1821,15 @@ dialog::backdrop {
 .person-editor #faceHint { min-height: 3em; min-height: 2lh; }
 .name-option { padding: 9px 12px; cursor: pointer; }
 .name-option:hover, .name-option[aria-selected="true"] { background: var(--accent); color: white; }
+
+/* Videos: the bottom bar sits below the player so it never covers the
+   native controls, and video faces scroll in one row instead of wrapping. */
+.viewer.video-mode .viewer-bottom { position: relative; background: none; padding-top: 6px; }
+.viewer.video-mode .image-people { flex-wrap: nowrap; overflow-x: auto; max-width: calc(100vw - 140px); padding-bottom: 2px; }
+.video-face { display: flex; align-items: center; flex-shrink: 0; gap: 6px; padding: 3px 6px 3px 3px; border: 1px solid #3a3c4b; border-radius: 8px; background: #22232d; }
+.video-face:has(.active) { border-color: #f4a8b8; }
+.image-people .video-face button { border: 0; padding: 0; background: none; border-radius: 4px; }
+.video-face-frame img { display: block; width: 48px; height: 36px; object-fit: cover; border-radius: 4px; }
+.image-people .video-face > button:nth-child(2) { font-size: 13px; white-space: nowrap; }
+.image-people .video-face .video-face-time { font: inherit; font-size: 12px; color: #a3a6b4; background: #171820; border: 1px solid #3a3c4b; border-radius: 6px; padding: 2px 6px; min-height: 0; width: auto; cursor: pointer; }
+.image-people .video-face .video-face-time:hover { color: #dfe0ea; }

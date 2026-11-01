@@ -1704,6 +1704,7 @@ async function openImage(i, external = null) {
   const video = $("fullVideo"), isVideo = photo.format === "VIDEO";
   video.onerror = video.onloadedmetadata = null; video.pause(); video.removeAttribute("src"); video.load();
   video.hidden = !isVideo; $("fullImage").hidden = isVideo;
+  $("viewer").classList.toggle("video-mode", isVideo);
   if (isVideo) {
     if (state.playing) stopPlay();
     clearViewerPreview();
@@ -1878,18 +1879,32 @@ function renderFaces() {
         chip.classList.remove("active");
       };
     }
-    if (f.timestamp == null) layer.append(box);
-    else {
-      const frame=text("img",""); frame.src="/api/images/"+photo.id+"/frame?timestamp="+f.timestamp; frame.width=96; frame.alt="Video appearance";
-      chip.prepend(frame);
-      const jump=text("select","");
-      jump.setAttribute("aria-label","Play an appearance of "+faceName(f));
-      jump.append(new Option("Jump to appearance...", ""));
-      for (const at of (f.timestamps || [f.timestamp])) jump.append(new Option(Math.floor(at/60)+":"+String(Math.floor(at%60)).padStart(2,"0"),String(at)));
-      jump.onchange=()=>{ if(jump.value==="")return; $("fullVideo").currentTime=Number(jump.value); $("fullVideo").play().catch(()=>{}); };
-      $("imagePeople").append(jump);
+    if (f.timestamp == null) { layer.append(box); $("imagePeople").append(chip); continue; }
+    // One chip per video face: frame (plays the first appearance), name
+    // (opens the editor), and the times the face appears.
+    const times = f.timestamps?.length ? f.timestamps : [f.timestamp];
+    const clock = at => Math.floor(at / 60) + ":" + String(Math.floor(at % 60)).padStart(2, "0");
+    const play = at => { const v = $("fullVideo"); v.currentTime = Number(at); v.play().catch(() => {}); };
+    const group = text("div", "", "video-face");
+    const frame = text("button", "", "video-face-frame");
+    const still = text("img", ""); still.src = "/api/images/" + photo.id + "/frame?timestamp=" + f.timestamp; still.alt = "";
+    frame.append(still);
+    frame.title = "Play from " + clock(times[0]);
+    frame.setAttribute("aria-label", "Play " + faceName(f) + " from " + clock(times[0]));
+    frame.onclick = () => play(times[0]);
+    let jump;
+    if (times.length === 1) {
+      jump = text("button", "\u25b6 " + clock(times[0]), "video-face-time");
+      jump.onclick = () => play(times[0]);
+    } else {
+      jump = text("select", "", "video-face-time");
+      jump.append(new Option("\u25b6 " + times.length + " times", ""));
+      for (const at of times) jump.append(new Option(clock(at), String(at)));
+      jump.onchange = () => { if (jump.value !== "") play(jump.value); jump.value = ""; };
     }
-    $("imagePeople").append(chip);
+    jump.setAttribute("aria-label", "Play an appearance of " + faceName(f));
+    group.append(frame, chip, jump);
+    $("imagePeople").append(group);
   }
   placeFaceLayer();
 }
