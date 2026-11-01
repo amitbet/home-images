@@ -10,7 +10,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
   const photos = [
     { id: 'portrait', width: 1884, height: 4080, image_url: '/api/images/portrait/image' },
-    { id: 'landscape', width: 4080, height: 1884, image_url: '/api/images/landscape/image' },
+    { id: 'landscape', width: 4080, height: 1884, format: 'JPEG', image_url: '/api/images/landscape/image', original_url: '/api/images/landscape/original' },
     { id: 'other', width: 1884, height: 4080, image_url: '/api/images/other/image' },
   ];
   class Image {
@@ -135,8 +135,35 @@ test('zoom at the maximum variant keeps the existing in-flight request', () => {
   const h = harness();
   h.navigate(1);
   h.zoom(2); h.upgradeViewerResolution(); h.runUpgrade();
-  assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].options.signal.aborted, false);
+  assert.equal(h.requests.length, 2);
+  h.zoom(3); h.upgradeViewerResolution(); h.runUpgrade();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].options.signal.aborted, false);
+});
+
+test('zooming past the largest preview loads full resolution', () => {
+  const h = harness();
+  h.zoom(2);
+  // Browser-decodable formats use the stored file untouched.
+  assert.equal(h.viewerURL(h.photos[1]), '/api/images/landscape/original');
+  // Other formats get a native-size server render (portrait fits 1200px tall).
+  h.zoom(3);
+  assert.match(h.viewerURL(h.photos[0]), /portrait\/image\?width=8192&height=8192&quality=85$/);
+  // Photos already within the largest preview never need more.
+  const small = { width: 2000, height: 1500, format: 'JPEG', image_url: '/x/image', original_url: '/x/original' };
+  assert.match(h.viewerURL(small), /width=2560&height=2560&quality=80$/);
+  // The next photo opens at 100%, so prefetch ignores the current zoom.
+  assert.match(h.viewerURL(h.photos[1], 1), /width=2560&height=2560&quality=80$/);
+});
+
+test('full-resolution original requests carry priority as a query string', async () => {
+  const h = harness();
+  h.navigate(1); h.requests[0].resolve(); await settle();
+  h.zoom(2); h.upgradeViewerResolution(); h.runUpgrade();
+  const full = h.requests.at(-1);
+  assert.equal(full.url, '/api/images/landscape/original?priority=viewer');
+  full.resolve(); await settle();
+  assert.equal(h.$('fullImage').dataset.resolution, '/api/images/landscape/original');
 });
 
 test('stalled preview exits loading state and can be retried', async () => {

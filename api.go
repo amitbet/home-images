@@ -341,11 +341,11 @@ func (l *Library) render(w http.ResponseWriter, r *http.Request) error {
 		priority = renderPrefetch
 	}
 	r = r.WithContext(context.WithValue(r.Context(), renderPriorityKey{}, priority))
-	width, err := intParam(r, "width", 1280, 32, 2560)
+	width, err := intParam(r, "width", 1280, 32, 8192)
 	if err != nil {
 		return err
 	}
-	height, err := intParam(r, "height", 800, 32, 2560)
+	height, err := intParam(r, "height", 800, 32, 8192)
 	if err != nil {
 		return err
 	}

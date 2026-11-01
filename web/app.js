@@ -1447,12 +1447,22 @@ function viewerSize(photo) {
     Math.max(1, stage.clientHeight || innerHeight * .7) * ratio);
   return { width, height: width / ratio };
 }
-const viewerURL = (photo) => {
+// Formats Chrome decodes itself (applying EXIF orientation), so the stored
+// file can be shown as-is instead of a server re-encode.
+const browserFormats = new Set(["JPEG", "PNG", "GIF", "WEBP", "BMP"]);
+const viewerURL = (photo, zoom = viewerZoom) => {
   const size = viewerSize(photo);
-  const pixels = Math.max(size.width, size.height) * Math.min(devicePixelRatio || 1, 2) * viewerZoom;
-  const side = [1280, 1920, 2560].find(side => side >= pixels) || 2560;
-  return photo.image_url + `?width=${side}&height=${side}&quality=80`;
+  const pixels = Math.max(size.width, size.height) * Math.min(devicePixelRatio || 1, 2) * zoom;
+  const side = [1280, 1920, 2560].find(side => side >= pixels);
+  if (side || Math.max(photo.width || 0, photo.height || 0) <= 2560)
+    return photo.image_url + `?width=${side || 2560}&height=${side || 2560}&quality=80`;
+  // Zoomed past the largest preview: fetch full resolution. The upscaled
+  // preview stays on screen until it arrives.
+  return browserFormats.has(photo.format) && photo.original_url
+    ? photo.original_url
+    : photo.image_url + "?width=8192&height=8192&quality=85";
 };
+const withPriority = (url, priority) => url + (url.includes("?") ? "&" : "?") + "priority=" + priority;
 let viewerFetch = null;
 let viewerZoom = 1, viewerPanX = 0, viewerPanY = 0, viewerDrag = null, viewerTransformIdle;
 // With an anchor (client coordinates), the image point under it stays put,
@@ -1530,7 +1540,7 @@ function fetchViewerImage(image, url) {
   const timeout = setTimeout(() => {
     if (!controller.signal.aborted) { controller.abort(); image.onerror?.(); }
   }, 30000);
-  fetch(url + "&priority=viewer", { signal: controller.signal, priority: "high" })
+  fetch(withPriority(url, "viewer"), { signal: controller.signal, priority: "high" })
     .then(r => { if (!r.ok) throw Error("Preview " + r.status); return r.blob(); })
     .then(blob => {
       if (!controller.signal.aborted) image.src = cacheThumbnail(url, blob).src;
@@ -1595,7 +1605,8 @@ function preloadNext(photo, gen, external) {
   if (gen !== state.viewerGeneration || !$("viewer").open) return;
   const warm = (next) => {
     if (!next || next.format === "VIDEO" || next.id === photo.id || gen !== state.viewerGeneration || !$("viewer").open) return;
-    const url = viewerURL(next);
+    // The next photo opens at 100%, so never prefetch a zoomed variant.
+    const url = viewerURL(next, 1);
     if (nextPreview?.url === url) return;
     nextPreview?.controller.abort();
     nextPreview = null;
@@ -1604,7 +1615,7 @@ function preloadNext(photo, gen, external) {
     const controller = new AbortController(), request = { url, controller };
     nextPreview = request;
     const timeout = setTimeout(() => controller.abort(), 30000);
-    fetch(url + "&priority=prefetch", { signal: controller.signal, priority: "low" })
+    fetch(withPriority(url, "prefetch"), { signal: controller.signal, priority: "low" })
       .then(r => { if (!r.ok) throw Error("Preview " + r.status); return r.blob(); })
       .then(blob => { if (!controller.signal.aborted) cacheThumbnail(url, blob); })
       .catch(() => {})
