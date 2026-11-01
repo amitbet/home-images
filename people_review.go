@@ -4,15 +4,23 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
 )
 
 type personSuggestion struct {
 	personSummary
 	Similarity float32 `json:"similarity"`
+}
+
+type suggestionTimings struct{ wait, index, candidates, eligibility, metadata, ranking time.Duration }
+
+func (s suggestionTimings) header(w http.ResponseWriter) {
+	w.Header().Set("Server-Timing", fmt.Sprintf("queue;dur=%.2f, index;dur=%.2f, candidates;dur=%.2f, eligibility;dur=%.2f, metadata;dur=%.2f, ranking;dur=%.2f", float64(s.wait)/1e6, float64(s.index)/1e6, float64(s.candidates)/1e6, float64(s.eligibility)/1e6, float64(s.metadata)/1e6, float64(s.ranking)/1e6))
 }
 
 // Suggestions use all retained group representatives, including merged aliases.
@@ -39,16 +47,21 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Bound CPU-heavy searches independently from image-serving connections.
+	var timings suggestionTimings
+	stage := time.Now()
 	select {
 	case a.suggestionSlot <- struct{}{}:
 		defer func() { <-a.suggestionSlot }()
 	case <-r.Context().Done():
 		return r.Context().Err()
 	}
+	timings.wait = time.Since(stage)
+	stage = time.Now()
 
 	a.personIndexMu.Lock()
 	defer a.personIndexMu.Unlock()
 	index, err := a.loadPersonHNSW(r.Context())
+	timings.index = time.Since(stage)
 	if err != nil {
 		return err
 	}
@@ -61,6 +74,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		if exists == 0 {
 			return bad(404, "Person not found")
 		}
+		timings.header(w)
 		return writeJSON(w, 200, map[string]any{"items": []personSuggestion{}, "total": 0, "offset": offset, "has_more": false, "approximate": false, "search_index": "hnsw"})
 	}
 	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
@@ -74,14 +88,24 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	// Oversample representatives because several can belong to one merged group,
 	// and metadata exclusions are applied afterwards. Expand for selective filters.
 	k := min(len(index.groups), max(1024, 4*(offset+limit)))
+	if r.URL.Query().Get("preview") == "true" {
+		k = min(len(index.groups), max(128, 4*(offset+limit)))
+	}
 	// Useful for exhaustive review and diagnosing ANN recall without changing
 	// assignments or maintaining a second vector store.
 	if r.URL.Query().Get("exact") == "true" {
 		k = len(index.groups)
 	}
+	read, err := a.read.BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer read.Rollback()
 	var items []personSuggestion
 	for {
+		stage = time.Now()
 		candidates, e := index.candidates(r.Context(), id, k)
+		timings.candidates += time.Since(stage)
 		if e != nil {
 			return e
 		}
@@ -89,16 +113,18 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		if e != nil {
 			return e
 		}
-		args := []any{string(ids), id, a.models, id, id, id}
+		args := []any{string(ids), id, a.models}
 		args = append(args, visibilityArgs...)
-		rows, err := a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personMediaCountsSQL+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.id IN(SELECT value FROM json_each(?)) AND p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND `+media+` AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=? AND (json_extract(x.box,'$.timestamp') IS NULL OR json_extract(x.box,'$.timestamp')=json_extract(y.box,'$.timestamp'))) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
+		args = append(args, id, id, id)
+		stage = time.Now()
+		rows, err := read.QueryContext(r.Context(), `SELECT p.id FROM people p WHERE p.id IN(SELECT value FROM json_each(?)) AND p.merged_into IS NULL AND p.id!=? AND EXISTS(SELECT 1 FROM faces f JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE f.person_id=p.id AND ai.models=? AND ai.error='' AND `+media+` AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`)) AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x INDEXED BY face_colocation_person JOIN faces y INDEXED BY face_colocation_image ON x.image_id=y.image_id WHERE x.person_id=? AND (json_extract(x.box,'$.timestamp') IS NULL OR json_extract(x.box,'$.timestamp')=json_extract(y.box,'$.timestamp')))`, args...)
 		if err != nil {
 			return err
 		}
 		items = []personSuggestion{}
 		for rows.Next() {
 			var p personSuggestion
-			if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.Videos, &p.FirstYear, &p.LastYear); err != nil {
+			if err = rows.Scan(&p.ID); err != nil {
 				rows.Close()
 				return err
 			}
@@ -107,10 +133,12 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		}
 		err = rows.Err()
 		rows.Close() // Release SQLite before the CPU-heavy ranking pass.
+		timings.eligibility += time.Since(stage)
 		if err != nil {
 			return err
 		}
 		ranked := items[:0]
+		stage = time.Now()
 		for _, p := range items {
 			for _, v := range vectors[id] {
 				if err := r.Context().Err(); err != nil {
@@ -134,6 +162,7 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 			ranked = append(ranked, p)
 		}
 		items = ranked
+		timings.ranking += time.Since(stage)
 		if len(items) >= max(64, 2*(offset+limit)) || k >= len(index.groups) {
 			break
 		}
@@ -148,6 +177,44 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	})
 	total := len(items)
 	items = items[min(offset, total):min(offset+limit, total)]
+	if len(items) > 0 {
+		stage = time.Now()
+		ids := make([]int64, 0, len(items))
+		for _, p := range items {
+			ids = append(ids, p.ID)
+		}
+		raw, e := json.Marshal(ids)
+		if e != nil {
+			return e
+		}
+		args := []any{string(raw), a.models}
+		args = append(args, visibilityArgs...)
+		rows, e := read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personMediaCountsSQL+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.id IN(SELECT value FROM json_each(?)) AND ai.models=? AND ai.error='' AND `+media+` AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
+		if e != nil {
+			return e
+		}
+		metadata := map[int64]personSummary{}
+		for rows.Next() {
+			var p personSummary
+			if e = rows.Scan(&p.ID, &p.Name, &p.Count, &p.Videos, &p.FirstYear, &p.LastYear); e != nil {
+				rows.Close()
+				return e
+			}
+			metadata[p.ID] = p
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return e
+		}
+		for i := range items {
+			image := items[i].ImageURL
+			items[i].personSummary = metadata[items[i].ID]
+			items[i].ImageURL = image
+		}
+		timings.metadata += time.Since(stage)
+	}
+	timings.header(w)
 	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total, "approximate": k < len(index.groups), "search_index": "hnsw"})
 }
 

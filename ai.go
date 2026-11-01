@@ -142,6 +142,7 @@ func newAI(l *Library) (*AI, error) {
 		}
 	}
 
+	a.warmPersonHNSW()
 	return a, nil
 }
 func (a *AI) Close() {
@@ -149,6 +150,7 @@ func (a *AI) Close() {
 		a.refreshCancel()
 		a.refreshWG.Wait()
 	}
+	a.flushPersonHNSW()
 	if a.ml != nil {
 		a.ml.http.CloseIdleConnections()
 	}

@@ -20,15 +20,36 @@ import (
 // SQLite owns the representatives. This file is only a disposable search cache.
 // The transactional revision also covers writes made outside the HTTP handlers.
 func (a *AI) initPersonHNSW() error {
-	_, err := a.db.Exec(`INSERT OR IGNORE INTO ai_settings VALUES('people_vector_revision','0');
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT OR IGNORE INTO ai_settings VALUES('people_vector_revision','0');
 INSERT OR IGNORE INTO ai_settings VALUES('people_vector_instance',lower(hex(randomblob(16))));
-CREATE TRIGGER IF NOT EXISTS people_vector_insert AFTER INSERT ON people BEGIN
- UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision'; END;
-CREATE TRIGGER IF NOT EXISTS people_vector_update AFTER UPDATE OF embedding,model,merged_into ON people BEGIN
- UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision'; END;
-CREATE TRIGGER IF NOT EXISTS people_vector_delete AFTER DELETE ON people BEGIN
- UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision'; END;`)
-	return err
+CREATE TABLE IF NOT EXISTS people_vector_changes(revision INTEGER PRIMARY KEY,person_id INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS face_colocation_person ON faces(person_id,image_id,json_extract(box,'$.timestamp'));
+CREATE INDEX IF NOT EXISTS face_colocation_image ON faces(image_id,json_extract(box,'$.timestamp'),person_id);
+INSERT OR IGNORE INTO ai_settings VALUES('people_vector_journal','1');
+DROP TRIGGER IF EXISTS people_vector_insert;
+DROP TRIGGER IF EXISTS people_vector_update;
+DROP TRIGGER IF EXISTS people_vector_delete;
+CREATE TRIGGER people_vector_insert AFTER INSERT ON people BEGIN
+ UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision';
+ INSERT INTO people_vector_changes SELECT CAST(value AS INTEGER),new.id FROM ai_settings WHERE key='people_vector_revision';
+ DELETE FROM people_vector_changes WHERE revision<(SELECT CAST(value AS INTEGER)-100000 FROM ai_settings WHERE key='people_vector_revision'); END;
+CREATE TRIGGER people_vector_update AFTER UPDATE OF embedding,model,merged_into ON people BEGIN
+ UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision';
+ INSERT INTO people_vector_changes SELECT CAST(value AS INTEGER),new.id FROM ai_settings WHERE key='people_vector_revision';
+ DELETE FROM people_vector_changes WHERE revision<(SELECT CAST(value AS INTEGER)-100000 FROM ai_settings WHERE key='people_vector_revision'); END;
+CREATE TRIGGER people_vector_delete AFTER DELETE ON people BEGIN
+ UPDATE ai_settings SET value=CAST(value AS INTEGER)+1 WHERE key='people_vector_revision';
+ INSERT INTO people_vector_changes SELECT CAST(value AS INTEGER),old.id FROM ai_settings WHERE key='people_vector_revision';
+ DELETE FROM people_vector_changes WHERE revision<(SELECT CAST(value AS INTEGER)-100000 FROM ai_settings WHERE key='people_vector_revision'); END;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type personRepresentative struct {
@@ -37,11 +58,13 @@ type personRepresentative struct {
 }
 
 type personHNSW struct {
-	revision string
-	vectors  map[int64][]vector
-	groups   map[int64]int64
-	graphs   map[int]*hnsw.Graph[int64] // isolate dimensions, including legacy models
-	savedAt  time.Time
+	revision          string
+	persistedRevision string
+	representatives   map[int64]personRepresentative
+	vectors           map[int64][]vector
+	groups            map[int64]int64
+	graphs            map[int]*hnsw.Graph[int64] // isolate dimensions, including legacy models
+	savedAt           time.Time
 }
 
 type savedPersonHNSW struct {
@@ -101,6 +124,13 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 	}
 	if a.personIndex != nil && a.personIndex.revision == revision {
 		return a.personIndex, nil
+	}
+	if a.personIndex != nil && a.personIndex.revision != "" {
+		if updated, e := a.updatePersonHNSW(ctx, tx, revision); e != nil {
+			return nil, e
+		} else if updated {
+			return a.personIndex, nil
+		}
 	}
 	path := filepath.Join(a.lib.config.DataDir, "people.hnsw")
 	var cached *savedPersonHNSW
@@ -162,7 +192,7 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 			a.personIndex = old
 		}
 	}
-	index := &personHNSW{revision: revision, vectors: map[int64][]vector{}, groups: map[int64]int64{}, graphs: map[int]*hnsw.Graph[int64]{}}
+	index := &personHNSW{revision: revision, vectors: map[int64][]vector{}, groups: map[int64]int64{}, graphs: map[int]*hnsw.Graph[int64]{}, representatives: map[int64]personRepresentative{}}
 	// Most writes only add representatives or change their merged group. Reuse
 	// graph topology for those; deletion/replacement takes the safe rebuild path.
 	old := a.personIndex
@@ -209,6 +239,7 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 		}
 		index.vectors[p.Group] = append(index.vectors[p.Group], p.Vector)
 		index.groups[p.ID] = p.Group
+		index.representatives[p.ID] = p
 		g := index.graphs[len(p.Vector)]
 		if g == nil {
 			g = newPersonGraph()
@@ -234,6 +265,7 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 			log.Printf("people HNSW cache: %v", err)
 		} else {
 			index.savedAt = time.Now()
+			index.persistedRevision = revision
 		}
 	}
 	index.revision = revision
@@ -304,7 +336,7 @@ func restorePersonHNSW(saved savedPersonHNSW) (index *personHNSW, err error) {
 			err = fmt.Errorf("invalid HNSW cache: %v", r)
 		}
 	}()
-	index = &personHNSW{revision: saved.Revision, vectors: map[int64][]vector{}, groups: map[int64]int64{}, graphs: map[int]*hnsw.Graph[int64]{}, savedAt: time.Now()}
+	index = &personHNSW{revision: saved.Revision, vectors: map[int64][]vector{}, groups: map[int64]int64{}, graphs: map[int]*hnsw.Graph[int64]{}, savedAt: time.Now(), persistedRevision: saved.Revision, representatives: map[int64]personRepresentative{}}
 	for dim, blob := range saved.Graphs {
 		g := newPersonGraph()
 		if err = g.Import(bytes.NewReader(blob)); err != nil {
@@ -330,6 +362,7 @@ func restorePersonHNSW(saved savedPersonHNSW) (index *personHNSW, err error) {
 		}
 		index.vectors[p.Group] = append(index.vectors[p.Group], p.Vector)
 		index.groups[p.ID] = p.Group
+		index.representatives[p.ID] = p
 	}
 	return index, nil
 }

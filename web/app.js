@@ -1012,6 +1012,8 @@ function updateMergeImageCount(){
 let suggestedGroups = [];
 let suggestionPool = [];
 let suggestionShown = 0;
+let suggestionHasMore = false;
+const dismissedSuggestionIds = new Set();
 let mergeGridDirty = false;
 let suggestionGeneration = 0;
 $("selectAllSuggestions").onclick = () => {
@@ -2570,7 +2572,7 @@ function appendSuggestionPage() {
       dismiss.disabled=true;
       try {await api(`/api/people/${person.id}/dismiss`,{other:candidate.id});
         if(state.editing.id!==person.id)return;
-        mergeSelection.delete(candidate.id);suggestedGroups=suggestedGroups.filter(p=>p.id!==candidate.id);row.remove();updateMergeSelection();loadMergeUndo(person);
+        dismissedSuggestionIds.add(candidate.id);mergeSelection.delete(candidate.id);suggestedGroups=suggestedGroups.filter(p=>p.id!==candidate.id);row.remove();updateMergeSelection();loadMergeUndo(person);
       }catch(e){$("editError").textContent=e.message;dismiss.disabled=false;}
     };
     row.append(dismiss);container.append(row);
@@ -2579,11 +2581,11 @@ function appendSuggestionPage() {
   updateMergeSelection();
 }
 function updateSuggestionProgress(){
-  $("moreSuggestions").hidden=suggestionShown>=suggestionPool.length;
+  $("moreSuggestions").hidden=suggestionShown>=suggestionPool.length&&!suggestionHasMore;
   $("suggestionProgress").textContent=`Showing ${suggestionShown} ranked groups. Select matches, then show more until the choices no longer look right. Up to 5,000 groups per merge.`;
 }
 $("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
-$("moreSuggestions").onclick=appendSuggestionPage;
+$("moreSuggestions").onclick=loadMorePersonSuggestions;
 $("suggestionMedia").onchange=()=>loadPersonSuggestions(state.editing);
 let suggestionController;
 async function loadPersonSuggestions(person) {
@@ -2592,7 +2594,8 @@ async function loadPersonSuggestions(person) {
   $("reviewPortrait").src=person.image_url||`/api/people/${person.id}/image`;
   const container=$("personSuggestions");
   const generation=++suggestionGeneration;
-  suggestedGroups=[];suggestionPool=[];suggestionShown=0;
+  suggestedGroups=[];suggestionPool=[];suggestionShown=0;suggestionHasMore=false;dismissedSuggestionIds.clear();
+  $("moreSuggestions").disabled=false;$("moreSuggestions").textContent="Show 25 more matches";
   $("refreshSuggestions").hidden=true;
   $("moreSuggestions").hidden=true;$("suggestionProgress").textContent="";updateMergeSelection();
   container.setAttribute("aria-busy","true");
@@ -2600,15 +2603,31 @@ async function loadPersonSuggestions(person) {
   const spinner=text("span","","loading-spinner");spinner.setAttribute("aria-hidden","true");
   loading.append(spinner,text("span","Searching for similar groups..."));container.replaceChildren(loading);
   try {
-    // One ranked snapshot avoids shifting pages while indexing/dismissals run.
-    // Reveal 25 at a time; only revealed portraits are requested.
-    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0&media_type=${$("suggestionMedia").value}`, undefined, controller.signal);
+    // Show a small exact-reranked shortlist first. The larger pool is fetched
+    // only if requested, preserving already revealed rows and selections.
+    const result=await api(`/api/people/${person.id}/suggestions?limit=25&preview=true&min_score=0&media_type=${$("suggestionMedia").value}`, undefined, controller.signal);
     if(state.editing.id!==person.id||generation!==suggestionGeneration)return;
-    suggestionPool=result.items;container.replaceChildren();
+    suggestionPool=result.items;suggestionHasMore=result.has_more;container.replaceChildren();
     if(!suggestionPool.length)container.textContent="No more groups to review. You can search by name below.";
     appendSuggestionPage();
   }catch(e){if(e.name!=="AbortError"&&state.editing.id===person.id&&generation===suggestionGeneration)container.textContent=e.message;}
   finally {if(generation===suggestionGeneration)container.setAttribute("aria-busy","false");}
+}
+
+async function loadMorePersonSuggestions() {
+  if(suggestionShown<suggestionPool.length){appendSuggestionPage();return;}
+  if(!suggestionHasMore||$("moreSuggestions").disabled)return;
+  const person=state.editing,generation=suggestionGeneration,controller=suggestionController;
+  const button=$("moreSuggestions");button.disabled=true;button.textContent="Finding more matches…";
+  try {
+    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0&media_type=${$("suggestionMedia").value}`,undefined,controller.signal);
+    if(state.editing.id!==person.id||generation!==suggestionGeneration)return;
+    const shown=suggestionPool.slice(0,suggestionShown).filter(p=>!dismissedSuggestionIds.has(p.id));
+    const seen=new Set(shown.map(p=>p.id));
+    suggestionPool=[...shown,...result.items.filter(p=>!seen.has(p.id)&&!dismissedSuggestionIds.has(p.id))];
+    suggestionShown=shown.length;suggestionHasMore=false;appendSuggestionPage();
+  } catch(e) {if(e.name!=="AbortError"&&generation===suggestionGeneration)$("editError").textContent=e.message;}
+  finally {if(generation===suggestionGeneration){button.disabled=false;button.textContent="Show 25 more matches";updateSuggestionProgress();}}
 }
 
 function confirmPersonAction(message) {

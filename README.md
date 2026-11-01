@@ -434,8 +434,12 @@ reranking of the shortlist still uses every retained representative.
 wrong-model, or stale caches rebuild automatically on the next review request.
 The first build can take several minutes for a large library. New representatives
 are added incrementally; merges update group mappings. Embedding replacements
-and deletions rebuild the graph. Cache writes are atomic and throttled to once
-per 30 seconds during requests; SQLite always remains authoritative.
+and deletions rebuild the graph. A transactional change journal updates new
+representatives and merge mappings without rereading every embedding. Cache
+writes are atomic; incremental changes are persisted on shutdown, outside the
+interactive request. SQLite always remains authoritative. Existing caches warm
+in the background at startup. Review loads 25 matches first and fetches the larger
+pool only when Show more is requested, keeping already shown rows in place.
 
 Name groups and merge duplicates in the People page. A higher `face_similarity`
 reduces automatic merging; changes apply to future indexing and do not recluster

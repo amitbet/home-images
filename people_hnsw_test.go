@@ -79,11 +79,12 @@ func TestPersonHNSWPersistenceAndRevision(t *testing.T) {
 	if err != nil || len(loaded.vectors[newID]) != 1 {
 		t.Fatal("restart lost appended representative", err)
 	}
+	loadedRevision := loaded.revision
 	if _, err = a.db.Exec("UPDATE people SET merged_into=? WHERE id=?", other, alias); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := a.loadPersonHNSW(ctx)
-	if err != nil || changed.revision == loaded.revision || len(changed.vectors[other]) != 2 || len(changed.vectors[id]) != 1 {
+	if err != nil || changed.revision == loadedRevision || len(changed.vectors[other]) != 2 || len(changed.vectors[id]) != 1 {
 		t.Fatal("merge invalidation", err)
 	}
 	if _, err = a.db.Exec("UPDATE people SET embedding=? WHERE id=?", vector{.8, .6, 0}.blob(), id); err != nil {

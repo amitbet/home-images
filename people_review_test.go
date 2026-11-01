@@ -166,6 +166,7 @@ func TestSuggestionPagesBeyondFirstBatch(t *testing.T) {
 		}
 	}
 	seen := map[int64]bool{}
+	var firstPage []int64
 	for page, want := range []int{25, 25, 5} {
 		var result struct {
 			Items   []personSuggestion
@@ -177,6 +178,9 @@ func TestSuggestionPagesBeyondFirstBatch(t *testing.T) {
 			t.Fatal(url, result)
 		}
 		for _, p := range result.Items {
+			if page == 0 {
+				firstPage = append(firstPage, p.ID)
+			}
 			if seen[p.ID] {
 				t.Fatal("duplicate page result", p.ID)
 			}
@@ -185,6 +189,19 @@ func TestSuggestionPagesBeyondFirstBatch(t *testing.T) {
 	}
 	if len(seen) != 55 {
 		t.Fatal("lost candidates", len(seen))
+	}
+	var preview struct {
+		Items   []personSuggestion
+		Total   int
+		HasMore bool `json:"has_more"`
+	}
+	if getJSON(t, s, fmt.Sprintf("/api/people/%d/suggestions?limit=25&preview=true&min_score=0", target), &preview) != 200 || len(preview.Items) != 25 || preview.Total != 55 || !preview.HasMore {
+		t.Fatal("preview page", preview)
+	}
+	for i, p := range preview.Items {
+		if p.ID != firstPage[i] || p.Count != 1 {
+			t.Fatal("preview changed ranking or lost displayed metadata", p)
+		}
 	}
 	for _, query := range []string{"limit=0", "offset=-1", "min_score=NaN", "min_score=2"} {
 		var result map[string]any
