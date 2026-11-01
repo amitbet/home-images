@@ -183,6 +183,11 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 		if reuse {
 			index.graphs = old.graphs
 			index.savedAt = old.savedAt
+			// Track every reused node even if cancellation interrupts remapping.
+			// A later deletion/replacement must still force a topology rebuild.
+			for id, group := range old.groups {
+				index.groups[id] = group
+			}
 		}
 	}
 	// Keep unfinished topology available if the browser cancels the first build.
