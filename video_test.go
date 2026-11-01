@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestVideoBrowsingAndFrameIsolation(t *testing.T) {
@@ -86,7 +87,7 @@ func TestVideoConversion(t *testing.T) {
 	}
 	l, s, root := fixture(t)
 	path := filepath.Join(root, "old.MOV")
-	cmd := exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=5", "-t", "1", "-c:v", "mpeg4", "-y", path)
+	cmd := exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=5", "-t", "1", "-c:v", "mjpeg", "-y", path)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("FFmpeg fixture unavailable: %v: %s", err, output)
 	}
@@ -110,12 +111,93 @@ func TestVideoConversion(t *testing.T) {
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if err != nil || resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "video/mp4" || !bytes.Contains(data, []byte("moov")) || !bytes.Contains(data, []byte("moof")) {
+	if err != nil || resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "video/mp4" || !bytes.Contains(data, []byte("moov")) {
 		t.Fatalf("conversion: status=%d bytes=%d err=%v", resp.StatusCode, len(data), err)
+	}
+	// The index must come first and byte ranges must work, or the player cannot seek.
+	if moov, mdat := bytes.Index(data, []byte("moov")), bytes.Index(data, []byte("mdat")); mdat < 0 || moov > mdat {
+		t.Fatalf("converted video is not faststart: moov=%d mdat=%d", moov, mdat)
+	}
+	req, _ := http.NewRequest("GET", s.URL+"/api/images/"+imageID("old.MOV")+"/video", nil)
+	req.Header.Set("Range", "bytes=10-19")
+	ranged, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part, _ := io.ReadAll(ranged.Body)
+	ranged.Body.Close()
+	if ranged.StatusCode != http.StatusPartialContent || !bytes.Equal(part, data[10:20]) {
+		t.Fatalf("converted range: %d %q", ranged.StatusCode, part)
 	}
 	decode := exec.Command(ffmpeg, "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-f", "null", "-")
 	decode.Stdin = bytes.NewReader(data)
 	if output, err := decode.CombinedOutput(); err != nil {
 		t.Fatalf("converted video cannot be decoded: %v: %s", err, output)
+	}
+}
+
+func TestVideoCaptureDate(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("FFmpeg not installed")
+	}
+	l, s, root := fixture(t)
+	path := filepath.Join(root, "PICT0134.MOV")
+	cmd := exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=5", "-t", "1", "-c:v", "mjpeg",
+		"-metadata", "creation_time=2005-07-15T10:23:45Z", "-y", path)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("FFmpeg fixture unavailable: %v: %s", err, output)
+	}
+	check := func(stage string) {
+		var p Photo
+		if status := getJSON(t, s, "/api/images/"+imageID("PICT0134.MOV"), &p); status != 200 {
+			t.Fatalf("%s: status %d", stage, status)
+		}
+		if p.TakenAt == nil || *p.TakenAt != "2005:07:15 10:23:45" || p.Width != 320 || p.Height != 240 {
+			t.Fatalf("%s: taken=%v size=%dx%d", stage, p.TakenAt, p.Width, p.Height)
+		}
+	}
+	l.Scan(context.Background())
+	check("first scan")
+	// Videos indexed before FFprobe was used have no probe marker; the next
+	// scan must re-read them even though the file itself is unchanged.
+	if _, err = l.db.Exec(`UPDATE images SET metadata=metadata_pack(json_remove(json_remove(json_set(metadata_json(metadata),'$.width',0,'$.height',0),'$.taken_at'),'$.exif.video_probe')) WHERE path='PICT0134.MOV'`); err != nil {
+		t.Fatal(err)
+	}
+	l.Scan(context.Background())
+	check("backfill scan")
+	// Samsung: UTC creation_time plus the phone's offset.
+	phone := filepath.Join(root, "20260512_201758.mp4")
+	cmd = exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x48:r=5", "-t", "1", "-c:v", "mjpeg",
+		"-metadata", "creation_time=2026-05-12T17:18:20Z", "-metadata", "com.samsung.android.utc_offset=+0300", "-movflags", "use_metadata_tags", "-y", phone)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("phone fixture: %v: %s", err, output)
+	}
+	l.Scan(context.Background())
+	var p Photo
+	getJSON(t, s, "/api/images/"+imageID("20260512_201758.mp4"), &p)
+	if p.TakenAt == nil || *p.TakenAt != "2026:05:12 20:18:20" || p.TakenAtOffset == nil || *p.TakenAtOffset != "+03:00" {
+		t.Fatalf("samsung video: taken=%v offset=%v", p.TakenAt, p.TakenAtOffset)
+	}
+}
+
+func TestVideoCaptureTime(t *testing.T) {
+	plus3 := time.FixedZone("", 3*3600)
+	for _, tc := range []struct {
+		raw           string
+		zone          *time.Location
+		taken, offset string
+	}{
+		{"2005-07-15T10:23:45.000000Z", nil, "2005:07:15 10:23:45", ""},
+		{"2023-05-01T12:34:56+0300", nil, "2023:05:01 12:34:56", "+03:00"},
+		{"2026-05-12T17:18:20.000000Z", plus3, "2026:05:12 20:18:20", "+03:00"},
+		{"1904-01-01T00:00:00.000000Z", nil, "", ""},
+		{"1970-01-01T00:00:00.000000Z", nil, "", ""},
+		{"garbage", nil, "", ""},
+	} {
+		taken, offset, ok := videoCaptureTime(tc.raw, tc.zone)
+		if taken != tc.taken || offset != tc.offset || ok != (tc.taken != "") {
+			t.Errorf("%q: got %q %q %t", tc.raw, taken, offset, ok)
+		}
 	}
 }

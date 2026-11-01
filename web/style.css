@@ -1112,6 +1112,8 @@ dialog::backdrop {
   position: relative;
   flex: 1;
   min-height: 0;
+  /* Lets the video size itself from the stage (cqw/cqh units). */
+  container-type: size;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1417,6 +1419,9 @@ dialog::backdrop {
   }
   .viewer-stage img {
     max-width: calc(100% - 60px);
+  }
+  .viewer-stage #fullVideo {
+    width: min(calc(100cqw - 60px), calc(100cqh * var(--video-ratio)));
   }
   .viewer-arrow {
     padding: 5px;
@@ -1797,7 +1802,17 @@ dialog::backdrop {
 
 .viewer-bottom .image-path { max-width: min(60vw, 800px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6e7ee; }
 
-.viewer-stage #fullVideo { max-width: 100%; max-height: 100%; }
+/* Scale videos up or down to the largest size that fits the stage, so old
+   320x240 clips do not open as a small box in the middle of the screen. */
+.viewer-stage #fullVideo {
+  --video-ratio: 1.3333;
+  aspect-ratio: var(--video-ratio);
+  width: min(calc(100cqw - 100px), calc(100cqh * var(--video-ratio)));
+  height: auto;
+  min-width: 0;
+  background: #000;
+  border-radius: 6px;
+}
 .video-badge { position: absolute; bottom: 8px; left: 8px; padding: 3px 7px; border-radius: 4px; background: #000b; color: white; }
 
 .name-combo { position: relative; }

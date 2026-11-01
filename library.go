@@ -67,6 +67,8 @@ type Library struct {
 	thumbnails       *thumbnailCache
 	previewDecoder   chan struct{}
 	videoSlots       chan struct{}
+	videoMu          sync.Mutex
+	videoFlights     map[string]*videoFlight
 	isolateRendering bool
 	ai               *AI
 	lastRender       atomic.Int64
@@ -342,7 +344,9 @@ func (l *Library) scanLocked(ctx context.Context) {
 	defer func() { l.mu.Lock(); l.status.Scanning = false; l.mu.Unlock() }()
 	// Read the compact catalog once instead of issuing a query for each file.
 	known := make(map[string]string)
-	rows, err := l.db.QueryContext(ctx, "SELECT path,signature FROM images")
+	// Videos indexed before the current FFprobe pass get an empty signature
+	// here, so they are re-read once to pick up their capture date.
+	rows, err := l.db.QueryContext(ctx, "SELECT path,CASE WHEN "+videoNeedsProbeSQL+" THEN '' ELSE signature END FROM images")
 	if err != nil {
 		l.scanError(err)
 		return

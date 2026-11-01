@@ -1718,7 +1718,11 @@ async function openImage(i, external = null) {
       video.play().catch(() => {});
     };
     video.onerror = convertVideo;
-    video.onloadedmetadata = () => { if (!converted && !video.videoWidth) convertVideo(); };
+    video.onloadedmetadata = () => {
+      if (!converted && !video.videoWidth) { convertVideo(); return; }
+      if (video.videoWidth && video.videoHeight) video.style.setProperty("--video-ratio", String(video.videoWidth / video.videoHeight));
+    };
+    video.style.setProperty("--video-ratio", photo.width && photo.height ? String(photo.width / photo.height) : "1.3333");
     video.src = photo.original_url;
     video.load();
     preloadNext(photo, gen, external);
