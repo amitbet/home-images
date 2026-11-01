@@ -31,7 +31,7 @@ func TestTagGroupResolvesExistingNameInSave(t *testing.T) {
 		t.Fatal("rename failed")
 	}
 	// No suggestion lookup is required, including when case/spacing differs.
-	req, _ := http.NewRequest("POST", s.URL+"/api/people/"+fmtID(source), strings.NewReader(`{"name":" dana ","match_existing":true}`))
+	req, _ := http.NewRequest("POST", s.URL+"/api/people/"+fmtID(source), strings.NewReader(`{"name":" dana "}`))
 	req.Header.Set("X-Home-Images", "1")
 	resp, err := s.Client().Do(req)
 	if err != nil {

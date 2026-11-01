@@ -58,7 +58,7 @@ func TestFilteredPhotoPagination(t *testing.T) {
 				Items []Photo
 				Total int
 			}
-			path := "/api/search?sort=filename&limit=1&offset=" + fmt.Sprint(offset) + "&" + filter
+			path := "/api/search?sort=filename&direction=asc&limit=1&offset=" + fmt.Sprint(offset) + "&" + filter
 			if getJSON(t, s, path, &result) != 200 || result.Total != 2 || len(result.Items) != 1 || result.Items[0].ID != want {
 				t.Fatal(path, result)
 			}

@@ -1054,11 +1054,33 @@ async function mergeOptions() {
 // Both naming dialogs share the lightweight autocomplete and cancellation rules.
 function nameAutocomplete(inputId, listId, dialogId, onMatches) {
   const input = $(inputId), list = $(listId);
-  let timer, controller, generation = 0;
+  input.removeAttribute("list");
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-controls", listId);
+  list.setAttribute("role", "listbox");
+  list.className = "name-dropdown";
+  let timer, controller, generation = 0, matches = [], active = -1;
+  const hide = () => {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+    active = -1;
+  };
+  const show = () => {
+    list.hidden = !matches.length;
+    input.setAttribute("aria-expanded", String(!!matches.length));
+  };
   const cancel = () => {
     clearTimeout(timer);
     controller?.abort();
     generation++;
+    hide();
+  };
+  const choose = i => {
+    input.value = matches[i].name;
+    cancel();
+    onMatches(matches);
   };
   const load = async () => {
     cancel();
@@ -1067,20 +1089,48 @@ function nameAutocomplete(inputId, listId, dialogId, onMatches) {
     try {
       const result = await api("/api/people/names?limit=50&q=" + encodeURIComponent(name), undefined, controller.signal);
       if (current !== generation || input.value.trim() !== name) return;
-      list.replaceChildren(...result.items.map(p => new Option(p.name)));
-      onMatches(result.items);
+      matches = result.items.filter((p, i, all) => all.findIndex(other => other.name.toLowerCase() === p.name.toLowerCase()) === i);
+      list.replaceChildren(...matches.map((p, i) => {
+        const option = text("div", p.name, "name-option");
+        option.id = `${listId}-${i}`;
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", "false");
+        option.addEventListener("mousedown", e => e.preventDefault());
+        option.addEventListener("click", () => choose(i));
+        return option;
+      }));
+      onMatches(matches);
+      if (document.activeElement === input) show();
     } catch (e) {
       if (e.name !== "AbortError" && current === generation) onMatches([]);
     }
   };
   const reset = () => {
     cancel();
+    matches = [];
     list.replaceChildren();
     onMatches([]);
   };
+  hide();
   input.addEventListener("input", () => {
     reset();
     timer = setTimeout(load, 200);
+  });
+  input.addEventListener("focus", load);
+  input.addEventListener("blur", hide);
+  input.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !list.hidden) {
+      e.preventDefault(); e.stopPropagation(); hide();
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && matches.length) {
+      e.preventDefault(); show();
+      active = active < 0 ? (e.key === "ArrowDown" ? 0 : matches.length - 1)
+        : (active + (e.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+      [...list.children].forEach((option, i) => option.setAttribute("aria-selected", String(i === active)));
+      input.setAttribute("aria-activedescendant", list.children[active].id);
+      list.children[active].scrollIntoView({block: "nearest"});
+    } else if (e.key === "Enter" && !list.hidden && active >= 0) {
+      e.preventDefault(); choose(active);
+    }
   });
   $(dialogId).addEventListener("close", cancel);
   return {load, reset, cancel};
@@ -2272,6 +2322,8 @@ window.addEventListener("keydown", (e) => {
   }
   viewChrome();
   refreshStatus();
+  // Status must keep updating even while the initial gallery request is pending.
+  setInterval(refreshStatus, 10000);
   loadSaved();
   await load();
   if (p.get("image")) {
@@ -2289,7 +2341,6 @@ window.addEventListener("keydown", (e) => {
     await openImage(0);
     togglePlay();
   }
-  setInterval(refreshStatus, 10000);
 })();
 let playbackLinkQuery = null;
 const playbackLinkButton = text("button", "Frame & API links", "secondary");
@@ -2421,6 +2472,7 @@ async function acquireWakeLock() {
   }
 }
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshStatus();
   if (document.visibilityState === "visible" && state.playing)
     acquireWakeLock();
 });

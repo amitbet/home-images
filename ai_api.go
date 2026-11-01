@@ -107,6 +107,7 @@ func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
 }
 
 func (a *AI) indexStatus(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Cache-Control", "no-store")
 	counts, err := a.countIndex(r.Context())
 	if err != nil {
 		return err
@@ -182,7 +183,7 @@ func (a *AI) editPerson(w http.ResponseWriter, r *http.Request) error {
 		}
 		// Face tagging resolves names in the same transaction as the write.
 		// Suggestions are optional; stale/missing results cannot create a duplicate.
-		if body.MatchExisting && resultName != "" {
+		if resultName != "" {
 			err = tx.QueryRow(`SELECT p.id,p.name FROM people p WHERE p.model=? AND p.merged_into IS NULL AND p.name=? COLLATE NOCASE AND p.id!=? ORDER BY (SELECT count(*) FROM faces f WHERE f.person_id=p.id) DESC,p.id LIMIT 1`, model, resultName, id).Scan(&body.MergeInto, &resultName)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
@@ -730,7 +731,7 @@ func (a *AI) mergeMany(w http.ResponseWriter, r *http.Request) error {
 func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	direction := r.URL.Query().Get("direction")
 	if direction == "" {
-		direction = "asc"
+		direction = "desc"
 	}
 	if direction != "asc" && direction != "desc" {
 		return "", nil, bad(400, "direction must be asc or desc")

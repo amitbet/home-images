@@ -1683,7 +1683,7 @@ dialog::backdrop {
 .gallery.list-view .photo-select { opacity: 1; }
 
 .suggestions-loading {display:flex;align-items:center;gap:.7rem;padding:1rem 0;}
-.loading-spinner {display:inline-block;width:1.2rem;height:1.2rem;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:loading-spin .8s linear infinite;}
+.loading-spinner {display:inline-block;flex-shrink:0;width:1.2rem;height:1.2rem;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:loading-spin .8s linear infinite;}
 @keyframes loading-spin {to {transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce) {.loading-spinner {animation-duration:2s}}
 #selectAllSuggestions {margin-bottom:.75rem;}
@@ -1796,3 +1796,7 @@ dialog::backdrop {
 
 .viewer-stage #fullVideo { max-width: 100%; max-height: 100%; }
 .video-badge { position: absolute; bottom: 8px; left: 8px; padding: 3px 7px; border-radius: 4px; background: #000b; color: white; }
+
+.name-dropdown { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); margin-top: 4px; }
+.name-option { padding: 9px 12px; cursor: pointer; }
+.name-option:hover, .name-option[aria-selected="true"] { background: var(--accent); color: white; }

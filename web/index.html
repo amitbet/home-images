@@ -362,7 +362,7 @@
           placeholder="e.g. Dana"
           autocomplete="off"
         />
-        <datalist id="personNameSuggestions"></datalist>
+        <div id="personNameSuggestions" hidden></div>
         <p id="personNameHint" aria-live="polite"></p>
         <div class="dialog-actions">
           <button type="button" id="cancelPerson" class="secondary">
@@ -425,7 +425,7 @@
           placeholder="e.g. Dana"
           autocomplete="off"
           list="faceSuggestions"
-        /><datalist id="faceSuggestions"></datalist>
+        /><div id="faceSuggestions" hidden></div>
         <fieldset class="face-scope">
           <legend>Apply to</legend>
           <label class="check-label"

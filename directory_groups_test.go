@@ -34,7 +34,7 @@ func TestDirectoryGroupsAndExactScope(t *testing.T) {
 		Items []Photo
 		Total int
 	}
-	if getJSON(t, s, "/api/search?group_kind=directory&group_key=", &photos) != 200 || photos.Total != 2 || photos.Items[0].ID != b.ID {
+	if getJSON(t, s, "/api/search?group_kind=directory&group_key=", &photos) != 200 || photos.Total != 2 || photos.Items[0].ID != a.ID {
 		t.Fatal("exact root or default time sort", photos)
 	}
 	if getJSON(t, s, "/api/search?group_kind=directory&group_key="+url.QueryEscape("album_100%"), &photos) != 200 || photos.Total != 1 || photos.Items[0].ID != c.ID {
