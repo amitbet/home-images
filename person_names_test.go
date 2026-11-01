@@ -74,3 +74,40 @@ func TestPersonNameAutocomplete(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonNameAutocompleteRanksPrefixMatchesFirst(t *testing.T) {
+	l, s, _ := fixture(t)
+	names := map[string]string{"a.jpg": "Etti Grinberg", "b.jpg": "Dana Inbar", "album_100%/c.jpg": "Inbal"}
+	for n, path := range []string{"a.jpg", "b.jpg", "album_100%/c.jpg"} {
+		prediction := syntheticPrediction()
+		if n == 1 {
+			prediction.Faces[0].Embedding = []byte(`"[0,1,0]"`)
+		} else if n == 2 {
+			prediction.Faces[0].Embedding = []byte(`"[0,0,1]"`)
+		}
+		if err := l.ai.save(context.Background(), testJob(t, l, path), prediction); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.ai.db.Exec("UPDATE people SET name=? WHERE id=(SELECT person_id FROM faces WHERE image_id=?)", names[path], imageID(path)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(query string, want ...string) {
+		t.Helper()
+		var result struct{ Items []struct{ Name string } }
+		if getJSON(t, s, "/api/people/names?"+query, &result) != 200 || len(result.Items) != len(want) {
+			t.Fatalf("%s: %+v", query, result.Items)
+		}
+		for i, name := range want {
+			if result.Items[i].Name != name {
+				t.Fatalf("%s: got %+v, want %v", query, result.Items, want)
+			}
+		}
+	}
+	// Name prefix, then a later word's prefix, then a match inside a word.
+	check("q=inb", "Inbal", "Dana Inbar", "Etti Grinberg")
+	// An exact name beats a longer name sharing its prefix.
+	check("q=dana%20inbar", "Dana Inbar")
+	check("q=", "Dana Inbar", "Etti Grinberg", "Inbal")
+	check("q=inb&limit=1", "Inbal")
+}

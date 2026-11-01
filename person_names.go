@@ -23,7 +23,9 @@ func (a *AI) personNames(w http.ResponseWriter, r *http.Request) error {
 	}
 	queryArgs := []any{a.lib.config.ML.FaceModel, "%" + escapeLike(q) + "%", a.models}
 	queryArgs = append(queryArgs, args...)
-	queryArgs = append(queryArgs, limit)
+	// Rank exact names, then names starting with the query, then a later word
+	// starting with it, then any other match: "inb" lists Inbal before Grinberg.
+	queryArgs = append(queryArgs, q, escapeLike(q)+"%", "% "+escapeLike(q)+"%", limit)
 	rows, err := a.read.QueryContext(r.Context(), `SELECT p.id,p.name
  FROM people p INDEXED BY people_name
  WHERE p.model=? AND p.merged_into IS NULL AND p.name!='' AND p.name LIKE ? ESCAPE '!'
@@ -32,7 +34,7 @@ func (a *AI) personNames(w http.ResponseWriter, r *http.Request) error {
  CROSS JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature
  WHERE f.person_id=p.id AND a.models=? AND a.error=''
  AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`))
- ORDER BY p.name COLLATE NOCASE,p.id LIMIT ?`, queryArgs...)
+ ORDER BY CASE WHEN p.name=? COLLATE NOCASE THEN 0 WHEN p.name LIKE ? ESCAPE '!' THEN 1 WHEN p.name LIKE ? ESCAPE '!' THEN 2 ELSE 3 END,p.name COLLATE NOCASE,p.id LIMIT ?`, queryArgs...)
 	if err != nil {
 		return err
 	}
