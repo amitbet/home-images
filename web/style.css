@@ -1700,7 +1700,7 @@ dialog::backdrop {
 #personEditor.merge-workspace {width: min(1440px,96vw);max-width:96vw;height:94dvh;max-height:94dvh;box-sizing:border-box;}
 #personEditor #personForm {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 #personEditor #personForm h2 {flex-basis:100%;}
-#personEditor #personName {max-width:320px;}
+#personEditor #personName, #personEditor .name-combo:has(#personName) {max-width:320px;}
 #personEditor #personSuggestions, #personEditor #mergeResults {display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;}
 .person-editor .merge-card, #personEditor #personSuggestions .merge-card {
   position:relative;display:flex;flex-direction:column;align-items:stretch;flex-wrap:nowrap;
@@ -1800,6 +1800,9 @@ dialog::backdrop {
 .viewer-stage #fullVideo { max-width: 100%; max-height: 100%; }
 .video-badge { position: absolute; bottom: 8px; left: 8px; padding: 3px 7px; border-radius: 4px; background: #000b; color: white; }
 
-.name-dropdown { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); margin-top: 4px; }
+.name-combo { position: relative; }
+.name-dropdown { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); margin-top: 4px; box-shadow: 0 10px 28px #00000029; }
+/* Room for the longest hint, so typing doesn't resize the dialog. */
+.person-editor #faceHint { min-height: 3em; min-height: 2lh; }
 .name-option { padding: 9px 12px; cursor: pointer; }
 .name-option:hover, .name-option[aria-selected="true"] { background: var(--accent); color: white; }

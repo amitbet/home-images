@@ -1107,6 +1107,11 @@ function nameAutocomplete(inputId, listId, dialogId, onMatches) {
   input.setAttribute("aria-controls", listId);
   list.setAttribute("role", "listbox");
   list.className = "name-dropdown";
+  // The list floats over the dialog instead of pushing its content down.
+  const combo = document.createElement("div");
+  combo.className = "name-combo";
+  input.before(combo);
+  combo.append(input, list);
   let timer, controller, generation = 0, matches = [], active = -1;
   const hide = () => {
     list.hidden = true;
