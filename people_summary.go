@@ -72,7 +72,7 @@ func (a *AI) peopleSummaries(ctx context.Context, refresh bool) (*peopleSnapshot
 }
 
 func (a *AI) queryPeopleSummaries(ctx context.Context) ([]personSummary, error) {
-	rows, err := a.read.QueryContext(ctx, `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+`
+	rows, err := a.read.QueryContext(ctx, `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personMediaCountsSQL+personYearRangeSQL+`
  FROM people p JOIN faces f ON f.person_id=p.id
  JOIN ai_images a ON a.image_id=f.image_id
  JOIN (SELECT id,signature,taken_at FROM catalog.images INDEXED BY image_person_capture
@@ -87,7 +87,7 @@ func (a *AI) queryPeopleSummaries(ctx context.Context) ([]personSummary, error) 
 	items := []personSummary{}
 	for rows.Next() {
 		var p personSummary
-		if err := rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Count, &p.Videos, &p.FirstYear, &p.LastYear); err != nil {
 			return nil, err
 		}
 		p.ImageURL = fmt.Sprintf("/api/people/%d/image", p.ID)

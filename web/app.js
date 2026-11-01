@@ -213,11 +213,46 @@ function params() {
   if (state.view === "memories") p.set("on_this_day", "true");
   return p;
 }
+let navigationReady = false;
+let restoringNavigation = false;
+let closingViewerForNavigation = false;
+function writeNavigationURL(url, replace = false) {
+  if (restoringNavigation) return;
+  if (!navigationReady || replace) {
+    history.replaceState({ homeImages: true }, "", url);
+    navigationReady = true;
+  } else if (url !== location.pathname + location.search) {
+    history.pushState({ homeImages: true }, "", url);
+  }
+}
+window.addEventListener("popstate", async () => {
+  const p = new URLSearchParams(location.search);
+  restoringNavigation = true;
+  try {
+    if ($("viewer").open) {
+      closingViewerForNavigation = true;
+      closeModal("viewer");
+    }
+    restoreQuery(p);
+    state.offset = Math.max(0, Number(p.get("offset")) || 0);
+    state.navigation = [];
+    await load();
+    if (p.get("image")) {
+      const photo = await api("/api/images/" + encodeURIComponent(p.get("image")));
+      state.annotations[photo.id] = await api("/api/curation/" + photo.id);
+      await openImage(0, photo);
+    }
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    restoringNavigation = false;
+  }
+});
 function syncURL() {
   const p = params();
   p.set("view", state.view);
   p.set("offset", state.offset);
-  history.replaceState(null, "", "/?" + p);
+  writeNavigationURL("/?" + p);
 }
 function resetInputs() {
   for (const id of Object.values(fields)) $(id).value = "";
@@ -689,7 +724,7 @@ function renderPeople(start = 0) {
     open.append(
       img,
       text("h3", p.name || "Person " + p.id),
-      text("p", number(p.photo_count) + " photos"),
+      text("p", personMediaLabel(p)),
     );
     open.onclick = (e) => {
       if (!normalClick(e)) return;
@@ -711,7 +746,7 @@ function updatePersonCard(p) {
   const card = document.querySelector(`.person-card[data-person="${p.id}"]`);
   if (!card) return;
   card.querySelector("h3").textContent = p.name || "Person " + p.id;
-  card.querySelector("p").textContent = number(p.photo_count) + " photos";
+  card.querySelector("p").textContent = personMediaLabel(p);
   card.querySelector("img").alt = p.name || "Unnamed group " + p.id;
   card.querySelector(".text-button").textContent = p.name
     ? "Edit name / merge"
@@ -728,8 +763,9 @@ async function refreshPersonCounts() {
     );
     for (const fresh of result.items) {
       const p = state.people.find((p) => p.id === fresh.id);
-      if (p && p.photo_count !== fresh.photo_count) {
+      if (p && (p.photo_count !== fresh.photo_count || p.video_count !== fresh.video_count)) {
         p.photo_count = fresh.photo_count;
+        p.video_count = fresh.video_count;
         updatePersonCard(p);
       }
     }
@@ -1026,14 +1062,20 @@ function mergeGroupRow(person) {
     : "Year unknown";
   const year = text("span", years, "merge-years");
   year.title = "Years taken (from photo capture dates)";
-  info.append(text("strong", image.alt), text("p", `${person.photo_count} photos`), year);
+  info.append(text("strong", image.alt), text("p", personMediaLabel(person)), year);
   row.append(image, info, mergeChoice(person));
   return row;
 }
 let mergeGeneration = 0,
   mergeTimer;
+function setMergeSearchBusy(busy) {
+  $("mergeSearchStatus").hidden = !busy;
+  $("mergeResults").setAttribute("aria-busy", String(busy));
+}
 async function mergeOptions() {
   const gen = ++mergeGeneration;
+  setMergeSearchBusy(true);
+  $("editError").textContent = "";
   try {
     const result = await api(
       "/api/people?limit=200&q=" + encodeURIComponent($("mergeSearch").value),
@@ -1048,7 +1090,10 @@ async function mergeOptions() {
     }
     updateMergeSelection();
   } catch (e) {
+    if (gen !== mergeGeneration) return;
     $("editError").textContent = e.message;
+  } finally {
+    if (gen === mergeGeneration) setMergeSearchBusy(false);
   }
 }
 // Both naming dialogs share the lightweight autocomplete and cancellation rules.
@@ -1158,6 +1203,9 @@ async function editPerson(p) {
   $("mergeOutcome").hidden=true;$("mergeOutcome").replaceChildren();
   $("mergeFooterOutcome").hidden=true;$("mergeFooterOutcome").textContent="";
   $("mergeSearch").value = "";
+  clearTimeout(mergeTimer);
+  ++mergeGeneration;
+  setMergeSearchBusy(false);
   modal("personEditor");
   $("personName").focus();
   personNameAutocomplete.load();
@@ -1167,6 +1215,9 @@ async function editPerson(p) {
 }
 $("mergeSearch").oninput = () => {
   clearTimeout(mergeTimer);
+  ++mergeGeneration;
+  setMergeSearchBusy(true);
+  $("mergeResults").replaceChildren();
   mergeTimer = setTimeout(mergeOptions, 250);
 };
 $("personForm").onsubmit = async (e) => {
@@ -1276,10 +1327,10 @@ async function refreshStatus() {
         ? "Indexing paused"
         : s.last_error && !s.worker_online
           ? "Waiting for Mac"
-          : s.pending
+          : (s.pending || s.video_pending)
             ? "Finding your memories"
-            : s.failed
-              ? "Some photos need a retry"
+            : (s.failed || s.video_failed)
+              ? "Some items need a retry"
               : "Library up to date";
     $("indexDetail").textContent = s.active
       ? "Working gently in the background"
@@ -1287,12 +1338,12 @@ async function refreshStatus() {
         ? "Your photos are still ready to view."
         : "Face groups and content search";
     $("progressBar").style.width =
-      (s.total ? (100 * s.indexed) / s.total : 0) + "%";
+      ((s.total + (s.video_total || 0)) ? (100 * (s.indexed + (s.video_indexed || 0))) / (s.total + (s.video_total || 0)) : 0) + "%";
     $("indexCounts").textContent =
-      `${number(s.indexed)} / ${number(s.total)} indexed${s.failed ? " · " + number(s.failed) + " failed" : ""}`;
+      `${number(s.indexed)} / ${number(s.total)} photos indexed \u00b7 ${number(s.pending)} pending${s.failed ? " · " + number(s.failed) + " failed" : ""}${s.video_total ? " \u00b7 " + number(s.video_indexed) + " / " + number(s.video_total) + " videos indexed \u00b7 " + number(s.video_pending) + " pending" + (s.video_failed ? " \u00b7 " + number(s.video_failed) + " failed" : "") : ""}`;
     $("pause").textContent = s.paused ? "Resume indexing" : "Pause indexing";
     $("pause").disabled = !s.enabled;
-    $("retry").hidden = !s.failed;
+    $("retry").hidden = !(s.failed || s.video_failed);
     $("workerDetail").textContent =
       `${s.worker_url || "No worker configured"} · ${s.clip_model} · ${s.face_model}`;
     $("indexError").textContent = s.last_error || "";
@@ -1576,6 +1627,7 @@ function showViewerPreview(photo, gen, external) {
 }
 async function openImage(i, external = null) {
   if (!state.items.length && !external) return;
+  const viewerWasOpen = $("viewer").open;
   state.playbackPhoto = external;
   if (!external) state.index = (i + state.items.length) % state.items.length;
   const gen = ++state.viewerGeneration;
@@ -1628,7 +1680,7 @@ async function openImage(i, external = null) {
   modal("viewer");
   const imageURL = new URL(location.href);
   imageURL.searchParams.set("image", photo.id);
-  history.replaceState(null, "", imageURL.pathname + imageURL.search);
+  writeNavigationURL(imageURL.pathname + imageURL.search, viewerWasOpen);
   void loadImageFaces(photo, gen);
 }
 const faceName = (f) => f.name || "Person " + f.person_id;
@@ -1720,9 +1772,13 @@ function thumbnailFaces(card, img) {
   const faces = state.faceMap[card.dataset.id];
   if (!state.showFaces || !faces?.length) return;
   const layer = text("div", "", "thumb-faces");
-  for (const f of faces)
+  for (const f of faces.filter(f=>f.timestamp==null))
     layer.append(faceBox(f, () => editFace(f, img, card.dataset.id), 4 / 3));
   card.querySelector(".photo-open").after(layer);
+}
+function personMediaLabel(p) {
+ const videos=p.video_count||0;
+ return number(p.photo_count-videos)+" photos"+(videos?" \u00b7 "+number(videos)+" videos":"");
 }
 function renderFaces() {
   const layer = $("faceLayer");
@@ -1733,7 +1789,12 @@ function renderFaces() {
   for (const f of state.faces) {
     const open = () => {
       stopPlay();
-      editFace(f, $("fullImage"), photo?.id);
+      if (f.timestamp != null) {
+        const image = new Image();
+        image.onload = () => { if ($("viewer").open && currentPhoto()?.id===photo.id) editFace(f, image, photo.id); };
+        image.onerror = () => toast("Unable to load the saved video frame");
+        image.src = "/api/images/"+photo.id+"/frame?timestamp="+f.timestamp;
+      } else editFace(f, $("fullImage"), photo?.id);
     };
     const box = faceBox(f, open);
     const chip = text("button", f.name || "Name this face");
@@ -1748,7 +1809,17 @@ function renderFaces() {
         chip.classList.remove("active");
       };
     }
-    layer.append(box);
+    if (f.timestamp == null) layer.append(box);
+    else {
+      const frame=text("img",""); frame.src="/api/images/"+photo.id+"/frame?timestamp="+f.timestamp; frame.width=96; frame.alt="Video appearance";
+      chip.prepend(frame);
+      const jump=text("select","");
+      jump.setAttribute("aria-label","Play an appearance of "+faceName(f));
+      jump.append(new Option("Jump to appearance...", ""));
+      for (const at of (f.timestamps || [f.timestamp])) jump.append(new Option(Math.floor(at/60)+":"+String(Math.floor(at%60)).padStart(2,"0"),String(at)));
+      jump.onchange=()=>{ if(jump.value==="")return; $("fullVideo").currentTime=Number(jump.value); $("fullVideo").play().catch(()=>{}); };
+      $("imagePeople").append(jump);
+    }
     $("imagePeople").append(chip);
   }
   placeFaceLayer();
@@ -1877,7 +1948,7 @@ function editFace(f, img, imageId) {
   faceNameAutocomplete.reset();
   $("faceError").textContent = "";
   $("faceHint").textContent = "";
-  $("faceScopeGroup").textContent = "Every photo of " + faceName(f);
+  $("faceScopeGroup").textContent = "Every appearance of " + faceName(f);
   document.querySelector("input[name=faceScope][value=group]").checked = true;
   drawFaceCrop(f, img);
   modal("faceEditor");
@@ -2045,7 +2116,9 @@ $("viewer").addEventListener("close", () => {
   state.playbackHistory = [];
   facesController?.abort();
   stopPlay();
-  syncURL();
+  if (closingViewerForNavigation) closingViewerForNavigation = false;
+  else if (new URLSearchParams(location.search).has("image") && history.state?.homeImages) history.back();
+  else syncURL();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 });
 $("closeViewer").onclick = () => {
@@ -2511,6 +2584,7 @@ function updateSuggestionProgress(){
 }
 $("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
 $("moreSuggestions").onclick=appendSuggestionPage;
+$("suggestionMedia").onchange=()=>loadPersonSuggestions(state.editing);
 let suggestionController;
 async function loadPersonSuggestions(person) {
   suggestionController?.abort();
@@ -2528,7 +2602,7 @@ async function loadPersonSuggestions(person) {
   try {
     // One ranked snapshot avoids shifting pages while indexing/dismissals run.
     // Reveal 25 at a time; only revealed portraits are requested.
-    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0`, undefined, controller.signal);
+    const result=await api(`/api/people/${person.id}/suggestions?limit=1000&min_score=0&media_type=${$("suggestionMedia").value}`, undefined, controller.signal);
     if(state.editing.id!==person.id||generation!==suggestionGeneration)return;
     suggestionPool=result.items;container.replaceChildren();
     if(!suggestionPool.length)container.textContent="No more groups to review. You can search by name below.";

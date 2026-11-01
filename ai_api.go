@@ -17,6 +17,7 @@ import (
 func (a *AI) routes(mux *http.ServeMux, wrap func(endpoint) http.HandlerFunc) {
 	a.curationRoutes(mux, wrap)
 	mux.HandleFunc("/api/people/{person}/merge-preview", a.mutation(a.mergePreview))
+	mux.HandleFunc("GET /api/images/{id}/frame", wrap(a.videoFrameAPI))
 	mux.HandleFunc("/api/indexing", wrap(a.indexStatus))
 	mux.HandleFunc("/api/people/{person}/merge-many", a.mutation(a.mergeMany))
 	mux.HandleFunc("/api/search", wrap(a.search))
@@ -78,7 +79,8 @@ func (a *AI) mutation(fn endpoint) http.HandlerFunc {
 }
 
 type indexCounts struct {
-	total, indexed, failed, faces, people int
+	total, indexed, failed, faces, people, excluded int
+	videoIndexed, videoFailed                       int
 }
 
 // All open tabs share a short-lived count snapshot. Worker state below stays live.
@@ -91,12 +93,19 @@ func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
 		return a.statusCounts, nil
 	}
 	var counts indexCounts
-	if err := a.read.QueryRowContext(ctx, "SELECT count(*) FROM catalog.images").Scan(&counts.total); err != nil {
+	if err := a.read.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM catalog.images),(SELECT count(*) FROM catalog.images i INDEXED BY image_video_status WHERE NOT ("+photoOnlySQL+"))").Scan(&counts.total, &counts.excluded); err != nil {
 		return counts, err
 	}
+	counts.total -= counts.excluded
+	if err := a.read.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM catalog.images i INDEXED BY image_video_status CROSS JOIN ai_images a INDEXED BY ai_status ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND NOT (`+photoOnlySQL+`)`, a.models).Scan(&counts.videoIndexed, &counts.videoFailed); err != nil {
+		return counts, err
+	}
+
 	if err := a.read.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a INDEXED BY ai_status JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&counts.indexed, &counts.failed); err != nil {
 		return counts, err
 	}
+	counts.indexed -= counts.videoIndexed
+	counts.failed -= counts.videoFailed
 	// Keep faces outermost: otherwise SQLite can choose a skip-scan across all
 	// person groups for every indexed image, making status polling CPU-bound.
 	if err := a.read.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT f.person_id) FROM faces f INDEXED BY face_person CROSS JOIN ai_images a INDEXED BY ai_status ON a.image_id=f.image_id CROSS JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&counts.faces, &counts.people); err != nil {
@@ -116,7 +125,7 @@ func (a *AI) indexStatus(w http.ResponseWriter, r *http.Request) error {
 	a.mu.Lock()
 	active, lastErr, lastSuccess, online := a.active, a.lastError, a.lastSuccess, a.online
 	a.mu.Unlock()
-	return writeJSON(w, 200, map[string]any{"enabled": a.lib.config.ML.Enabled, "paused": a.paused.Load(), "worker_url": a.lib.config.ML.URL, "worker_online": online, "active": active, "total": total, "indexed": indexed - failed, "failed": failed, "pending": total - indexed, "faces": faces, "people": people, "last_error": lastErr, "last_success": lastSuccess, "clip_model": a.lib.config.ML.ClipModel, "face_model": a.lib.config.ML.FaceModel, "interval_ms": 0, "concurrency": a.lib.config.ML.Concurrency, "in_flight": a.pipeline.inFlight.Load(), "session_completed": a.pipeline.completed.Load(), "session_images_per_minute": a.pipelineRate(), "timings_ms": a.pipelineTimings()})
+	return writeJSON(w, 200, map[string]any{"enabled": a.lib.config.ML.Enabled, "paused": a.paused.Load(), "worker_url": a.lib.config.ML.URL, "worker_online": online, "active": active, "total": total, "indexed": indexed - failed, "failed": failed, "pending": total - indexed, "video_total": counts.excluded, "video_indexed": counts.videoIndexed - counts.videoFailed, "video_failed": counts.videoFailed, "video_pending": counts.excluded - counts.videoIndexed, "faces": faces, "people": people, "last_error": lastErr, "last_success": lastSuccess, "clip_model": a.lib.config.ML.ClipModel, "face_model": a.lib.config.ML.FaceModel, "interval_ms": 0, "concurrency": a.lib.config.ML.Concurrency, "in_flight": a.pipeline.inFlight.Load(), "session_completed": a.pipeline.completed.Load(), "session_images_per_minute": a.pipelineRate(), "timings_ms": a.pipelineTimings()})
 }
 func (a *AI) control(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
@@ -330,6 +339,7 @@ type personSummary struct {
 	Name      string `json:"name"`
 	Count     int    `json:"photo_count"`
 	ImageURL  string `json:"image_url"`
+	Videos    int    `json:"video_count"`
 }
 
 func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
@@ -360,7 +370,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	base += " AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND " + visible + ")"
 	args = append(args, visibilityArgs...)
 	var total int
-	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+personYearRangeSQL+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id", args...)
+	rows, err := a.read.QueryContext(r.Context(), "SELECT p.id,p.name,count(DISTINCT f.image_id)"+personMediaCountsSQL+personYearRangeSQL+base+" GROUP BY p.id ORDER BY count(DISTINCT f.image_id) DESC,p.id", args...)
 	if err != nil {
 		return err
 	}
@@ -368,7 +378,7 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 	items := []personSummary{}
 	for rows.Next() {
 		var p personSummary
-		if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
+		if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.Videos, &p.FirstYear, &p.LastYear); err != nil {
 			return err
 		}
 		total++
@@ -388,12 +398,14 @@ func (a *AI) people(w http.ResponseWriter, r *http.Request) error {
 }
 
 type faceTag struct {
-	ID       int64           `json:"id"`
-	PersonID int64           `json:"person_id"`
-	Name     string          `json:"name"`
-	Box      json.RawMessage `json:"box"`
-	Width    int             `json:"width"`
-	Height   int             `json:"height"`
+	Timestamps []float64       `json:"timestamps,omitempty"`
+	Timestamp  *float64        `json:"timestamp,omitempty"`
+	ID         int64           `json:"id"`
+	PersonID   int64           `json:"person_id"`
+	Name       string          `json:"name"`
+	Box        json.RawMessage `json:"box"`
+	Width      int             `json:"width"`
+	Height     int             `json:"height"`
 }
 
 // Indexed faces for the given images, keyed by image ID, honoring the hidden filter.
@@ -422,6 +434,13 @@ func (a *AI) faceTags(r *http.Request, ids []string) (map[string][]faceTag, erro
 			return nil, err
 		}
 		f.Box = json.RawMessage(box)
+		var timed struct {
+			Timestamp  *float64  `json:"timestamp"`
+			Timestamps []float64 `json:"timestamps"`
+		}
+		_ = json.Unmarshal([]byte(box), &timed)
+		f.Timestamp = timed.Timestamp
+		f.Timestamps = timed.Timestamps
 		result[image] = append(result[image], f)
 	}
 	return result, rows.Err()
@@ -457,7 +476,11 @@ func (a *AI) faceImage(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	err = a.read.QueryRowContext(r.Context(), `SELECT f.image_id,f.box,f.width,f.height FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE f.person_id=? AND a.models=? AND a.error='' AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) ORDER BY f.score DESC,f.id LIMIT 1`, append([]any{id, a.models}, args...)...).Scan(&imageID, &box, &width, &height)
+	media, err := reviewMediaSQL(r, "i.path")
+	if err != nil {
+		return err
+	}
+	err = a.read.QueryRowContext(r.Context(), `SELECT f.image_id,f.box,f.width,f.height FROM faces f JOIN ai_images a ON a.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE f.person_id=? AND a.models=? AND a.error='' AND `+media+` AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) ORDER BY f.score DESC,f.id LIMIT 1`, append([]any{id, a.models}, args...)...).Scan(&imageID, &box, &width, &height)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bad(404, "No indexed face")
 	}

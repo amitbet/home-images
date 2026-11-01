@@ -830,3 +830,21 @@ The previous individual-photo interface is available under **Individual photos &
 Trash**. Folder comparisons use a short-lived in-memory snapshot for pagination;
 Refresh and cleanup completion invalidate it. Creating a plan always reads the
 current catalog, and actual cleanup always reads the originals for verification.
+
+
+Video AI indexing runs after eligible photos. FFmpeg and its sibling FFprobe
+must be installed. Regular samples span the whole recording (roughly every ten
+seconds, at least three, capped at 240); a bounded scene-change pass adds up to
+120 frames. Identical consecutive JPEGs are skipped. Long recordings therefore
+have sparser coverage and brief appearances can be missed.
+
+Sampled JPEGs and content vectors are retained in the AI database. Content search
+uses the best matching frame and returns each video once. Repeated faces are
+grouped within the video, with a representative frame and appearance timestamps;
+video groups match existing photo people at a minimum similarity of 0.7.
+The video viewer supports tagging a saved face and jumping to sampled appearances.
+Possible matches supports All media / Photos / Videos; the source person still
+matches across both media. People cards separate photo and video counts.
+The legacy API photo_count field remains the total asset count, with video_count
+providing the video subset. Indexing status reports separate video_total,
+video_indexed, video_pending and video_failed fields alongside the photo counts.

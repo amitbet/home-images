@@ -204,6 +204,9 @@ func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width,
 	}
 	crop := &faceCrop{Box: b, Width: width, Height: height}
 	build := func(ctx context.Context) ([]byte, error) {
+		if isVideo(p.Path) {
+			return l.videoFaceThumbnail(ctx, p, box)
+		}
 		if l.isolateRendering {
 			if len(background) > 0 && background[0] {
 				select {

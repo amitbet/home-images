@@ -91,3 +91,39 @@ func TestIndexCountsRefreshWhenFilesMoveToTrash(t *testing.T) {
 		t.Fatalf("restore total %d expected %d: %v", restored.total, before.total, err)
 	}
 }
+
+// Videos are in the catalog but never eligible for the AI photo pipeline.
+// Even legacy AI rows for videos must not inflate completed/failed counts.
+func TestIndexStatusExcludesVideos(t *testing.T) {
+	l, s, _ := fixture(t)
+	ctx := context.Background()
+	jobs := []aiJob{testJob(t, l, "a.jpg"), testJob(t, l, "b.jpg"), testJob(t, l, "album_100%/c.jpg")}
+	for _, j := range jobs {
+		if err := l.ai.save(ctx, j, syntheticPrediction()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := l.db.Exec("UPDATE images SET path='movie.MP4' WHERE id=?", jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.db.Exec("UPDATE images SET path='movie.WeBm' WHERE id=?", jobs[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.ai.db.Exec("UPDATE ai_images SET error='failed' WHERE image_id IN (?,?)", jobs[1].ID, jobs[2].ID); err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Total, Indexed, Failed, Pending int
+		ExcludedVideos                  int `json:"video_total"`
+	}
+	if getJSON(t, s, "/api/indexing", &status) != 200 {
+		t.Fatal("status failed")
+	}
+	if status.Total != 3 || status.Indexed != 0 || status.Failed != 1 || status.Pending != 2 || status.ExcludedVideos != 2 {
+		t.Fatalf("%+v", status)
+	}
+	counts, err := l.ai.countIndex(ctx)
+	if err != nil || counts.faces != 1 || counts.people != 1 {
+		t.Fatal(counts, err)
+	}
+}

@@ -378,20 +378,22 @@
       <button id="undoMerge" class="secondary" hidden>Undo latest merge</button>
       <p id="undoNote" hidden>Restores the original groups. Faces indexed since the merge stay in their current group.</p>
       <h3>Possible matches</h3>
+<label for="suggestionMedia">Show appearances in</label><select id="suggestionMedia"><option value="all">All media</option><option value="images">Photos</option><option value="videos">Videos</option></select>
       <img id="reviewPortrait" width="88" height="88" alt="Current face group" />
       <section id="mergeOutcome" class="merge-outcome" role="status" hidden></section>
       <p class="merge-help">Review before merging. Similarity suggests a match; it does not confirm identity. Years show the group's photo capture dates.</p>
-      <div class="merge-toolbar"><button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all matches</button>
+      <div class="merge-toolbar">
       <p id="suggestionProgress" aria-live="polite"></p></div>
       <div id="personSuggestions" aria-live="polite"></div>
       <button id="refreshSuggestions" class="secondary" type="button" hidden>Search again using merged groups</button>
       <button id="moreSuggestions" class="secondary" type="button" hidden>Show 25 more matches</button>
       <details id="manualMergeSearch"><summary>Find another group by name</summary><h4>Find another group</h4>
       <label for="mergeSearch">Search groups to add to this person</label>
-      <input id="mergeSearch" placeholder="Search names" />
+      <input id="mergeSearch" placeholder="Search names" autocomplete="off" />
+      <div id="mergeSearchStatus" class="merge-search-status" role="status" hidden><span class="loading-spinner" aria-hidden="true"></span><span>Searching for groups...</span></div>
       <div id="mergeResults" class="merge-results"></div>
       </details><div class="merge-review-footer"><div class="merge-footer-status"><p id="mergeFooterOutcome" role="status" hidden></p><p id="mergeSelectionCount" aria-live="polite">No groups selected</p></div>
-      <div class="merge-footer-actions"><button id="doneMergeReview" type="button" class="secondary">Done</button><button id="mergePerson" class="primary" disabled>Review selected groups</button></div></div>
+      <div class="merge-footer-actions"><button id="selectAllSuggestions" type="button" class="secondary" disabled>Select all displayed</button><button id="doneMergeReview" type="button" class="secondary">Done</button><button id="mergePerson" class="primary" disabled>Review selected groups</button></div></div>
       <div id="singleFaceTarget" hidden><label for="mergeTarget">Move face to</label><select id="mergeTarget"></select></div>
       <p id="editError" role="alert"></p>
     </dialog>

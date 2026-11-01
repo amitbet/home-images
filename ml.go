@@ -83,9 +83,11 @@ type faceBox struct {
 	Y2 float64 `json:"y2"`
 }
 type mlFace struct {
-	Box       faceBox         `json:"boundingBox"`
-	Embedding json.RawMessage `json:"embedding"`
-	Score     float32         `json:"score"`
+	Timestamps []float64       `json:"timestamps,omitempty"`
+	Timestamp  *float64        `json:"timestamp,omitempty"`
+	Box        faceBox         `json:"boundingBox"`
+	Embedding  json.RawMessage `json:"embedding"`
+	Score      float32         `json:"score"`
 }
 type mlPrediction struct {
 	Clip   json.RawMessage `json:"clip"`

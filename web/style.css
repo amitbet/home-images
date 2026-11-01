@@ -1686,7 +1686,7 @@ dialog::backdrop {
 .loading-spinner {display:inline-block;flex-shrink:0;width:1.2rem;height:1.2rem;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:loading-spin .8s linear infinite;}
 @keyframes loading-spin {to {transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce) {.loading-spinner {animation-duration:2s}}
-#selectAllSuggestions {margin-bottom:.75rem;}
+#selectAllSuggestions {margin:0;}
 
 .viewer-stage {overflow:hidden;}
 .viewer-arrow {position:relative;z-index:3;flex-shrink:0;}
@@ -1723,9 +1723,12 @@ dialog::backdrop {
 .person-editor .merge-card .dismiss-match {align-self:center;padding:2px 6px;min-height:26px;font-size:12px;}
 #personEditor .merge-review-footer {position:sticky;bottom:-28px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 4px;background:var(--surface);border-top:1px solid var(--line);z-index:5;}
 #personEditor #moreSuggestions {margin:18px 0;}
-#personEditor #manualMergeSearch {margin-top:20px;}
+#personEditor #manualMergeSearch {margin-top:20px;padding-bottom:12px;}
+#personEditor #mergeResults:not(:empty) {margin-top:12px;padding:4px;}
+.merge-search-status:not([hidden]) {display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--muted);}
 #mergeConfirm {width:min(1000px,94vw);}
-#mergeConfirmGroups {display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;}
+#mergeConfirmGroups {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:12px;}
+#mergeConfirmGroups .merge-card img {width:100%;height:auto;aspect-ratio:1;object-fit:cover;}
 @media(max-width:600px){#personEditor.merge-workspace{padding:16px;}#personEditor #personSuggestions{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}#personEditor #personSuggestions .face-suggestion{padding:8px;}#personEditor .merge-review-footer{bottom:-16px;}}
 
 #personEditor #personForm {padding-right:120px;}
@@ -1748,7 +1751,7 @@ dialog::backdrop {
 .merge-footer-status {min-width:0;flex:1;}
 #personEditor .merge-footer-status p {margin:3px 0;}
 #mergeFooterOutcome {font-weight:600;color:var(--accent-ink);}
-.merge-footer-actions {display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.merge-footer-actions {display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;}
 @media(max-width:600px){#personEditor .merge-review-footer{flex-wrap:wrap;gap:8px;}.merge-footer-status{flex-basis:100%;}.merge-footer-actions{width:100%;justify-content:flex-end;}}
 
 #mergeResult {width:min(580px,94vw);}

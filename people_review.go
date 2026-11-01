@@ -64,6 +64,10 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		return writeJSON(w, 200, map[string]any{"items": []personSuggestion{}, "total": 0, "offset": offset, "has_more": false, "approximate": false, "search_index": "hnsw"})
 	}
 	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
+	media, mediaErr := reviewMediaSQL(r, "i.path")
+	if mediaErr != nil {
+		return mediaErr
+	}
 	if err != nil {
 		return err
 	}
@@ -87,14 +91,14 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		}
 		args := []any{string(ids), id, a.models, id, id, id}
 		args = append(args, visibilityArgs...)
-		rows, err := a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.id IN(SELECT value FROM json_each(?)) AND p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=?) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
+		rows, err := a.read.QueryContext(r.Context(), `SELECT p.id,p.name,count(DISTINCT f.image_id)`+personMediaCountsSQL+personYearRangeSQL+` FROM people p JOIN faces f ON f.person_id=p.id JOIN ai_images ai ON ai.image_id=f.image_id JOIN catalog.images i INDEXED BY image_person_capture ON i.id=ai.image_id AND i.signature=ai.signature WHERE p.id IN(SELECT value FROM json_each(?)) AND p.merged_into IS NULL AND p.id!=? AND ai.models=? AND ai.error='' AND `+media+` AND NOT EXISTS(SELECT 1 FROM person_dismissals d WHERE (d.a=? AND d.b=p.id) OR (d.b=? AND d.a=p.id)) AND p.id NOT IN(SELECT y.person_id FROM faces x JOIN faces y ON x.image_id=y.image_id WHERE x.person_id=? AND (json_extract(x.box,'$.timestamp') IS NULL OR json_extract(x.box,'$.timestamp')=json_extract(y.box,'$.timestamp'))) AND i.id IN(SELECT id FROM catalog.images WHERE id=f.image_id AND `+visible+`) GROUP BY p.id`, args...)
 		if err != nil {
 			return err
 		}
 		items = []personSuggestion{}
 		for rows.Next() {
 			var p personSuggestion
-			if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.FirstYear, &p.LastYear); err != nil {
+			if err = rows.Scan(&p.ID, &p.Name, &p.Count, &p.Videos, &p.FirstYear, &p.LastYear); err != nil {
 				rows.Close()
 				return err
 			}
@@ -122,6 +126,10 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 				continue
 			}
 			p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
+			imageQuery := r.URL.Query()
+			imageQuery.Del("limit")
+			imageQuery.Del("offset")
+			p.ImageURL += "?" + imageQuery.Encode()
 
 			ranked = append(ranked, p)
 		}

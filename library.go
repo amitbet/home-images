@@ -120,6 +120,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 		return nil, err
 	}
 	// Cover grouping/autocomplete fields without scanning compressed metadata pages.
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_video_status ON images(id,signature) WHERE NOT (" + strings.ReplaceAll(photoOnlySQL, "i.path", "path") + ")"); err != nil {
+		l.Close()
+		return nil, err
+	}
 	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS image_identity_size ON images(size_bytes) WHERE file_hash IS NOT NULL; CREATE INDEX IF NOT EXISTS image_person_capture ON images(id,signature,taken_at); CREATE INDEX IF NOT EXISTS image_directory_exact ON images(directory,id,signature); CREATE INDEX IF NOT EXISTS image_group_fields_v2 ON images(directory COLLATE NOCASE,path,taken_at,created_at,size_bytes,id,signature); DROP INDEX IF EXISTS image_group_fields"); err != nil {
 		l.Close()
 		return nil, err

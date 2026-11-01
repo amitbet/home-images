@@ -27,7 +27,7 @@ func (a *AI) peoplePage(w http.ResponseWriter, r *http.Request, limit, offset in
 ), page AS MATERIALIZED (
  SELECT * FROM groups ORDER BY photo_count DESC,id LIMIT ? OFFSET ?
 )
- SELECT page.id,page.name,page.photo_count`+personYearRangeSQL+`,total.n
+ SELECT page.id,page.name,page.photo_count`+personMediaCountsSQL+personYearRangeSQL+`,total.n
  FROM (SELECT count(*) AS n FROM groups) total
  LEFT JOIN page ON 1
  LEFT JOIN faces f ON f.person_id=page.id
@@ -43,7 +43,7 @@ func (a *AI) peoplePage(w http.ResponseWriter, r *http.Request, limit, offset in
 		var id, count sql.NullInt64
 		var name sql.NullString
 		var p personSummary
-		if err := rows.Scan(&id, &name, &count, &p.FirstYear, &p.LastYear, &total); err != nil {
+		if err := rows.Scan(&id, &name, &count, &p.Videos, &p.FirstYear, &p.LastYear, &total); err != nil {
 			return err
 		}
 		// The total's LEFT JOIN returns one empty row past the last page.

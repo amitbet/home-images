@@ -26,6 +26,7 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
+	videoWorked         bool
 	personIndexMu       sync.Mutex
 	personIndex         *personHNSW
 	peopleMu            sync.Mutex
@@ -89,6 +90,9 @@ func newAI(l *Library) (*AI, error) {
 	if err = a.initPersonHNSW(); err != nil {
 		return fail(err)
 	}
+	if _, err = a.db.Exec(videoSchema); err != nil {
+		return fail(err)
+	}
 	// Per-face embeddings let a manually retagged face teach recognition.
 	// Faces indexed before this column existed keep NULL.
 	var hasEmbedding int
@@ -106,7 +110,7 @@ func newAI(l *Library) (*AI, error) {
 		return fail(err)
 	}
 	if root != "" && root != l.rootPath && l.config.RelocateFrom != root {
-		if _, err = a.db.Exec("DELETE FROM faces;DELETE FROM people;DELETE FROM ai_images;DELETE FROM person_dismissals;DELETE FROM face_overrides;DELETE FROM ai_settings WHERE key='merge_undo';"); err != nil {
+		if _, err = a.db.Exec("DELETE FROM video_frames;DELETE FROM faces;DELETE FROM people;DELETE FROM ai_images;DELETE FROM person_dismissals;DELETE FROM face_overrides;DELETE FROM ai_settings WHERE key='merge_undo';"); err != nil {
 			return fail(err)
 		}
 	}
@@ -223,6 +227,25 @@ func (a *AI) Run(ctx context.Context) {
 			continue
 		}
 		if len(jobs) == 0 {
+			// Restart the photo scan before spending time on lower-priority videos.
+			photos, e := a.jobs(ctx, "")
+			if e != nil {
+				a.setError(e)
+				continue
+			}
+			if len(photos) > 0 {
+				cursor = ""
+				continue
+			}
+			if e := a.indexNextVideo(ctx); e != nil {
+				a.setError(e)
+				if !waitContext(ctx, 30*time.Second) {
+					return
+				}
+			} else if a.videoWorked {
+				cursor = ""
+				continue
+			}
 			cursor = ""
 			a.cleanup(ctx)
 			if !waitContext(ctx, 30*time.Second) {
@@ -315,7 +338,7 @@ func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
 	}
 }
 func (a *AI) cleanup(ctx context.Context) {
-	_, err := a.db.ExecContext(ctx, `DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones);`)
+	_, err := a.db.ExecContext(ctx, `DELETE FROM video_frames WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones);`)
 	if err != nil && ctx.Err() == nil {
 		a.setError(err)
 	}
@@ -325,7 +348,7 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 	if err != nil {
 		return fmt.Errorf("CLIP: %w", err)
 	}
-	if p.Width < 1 || p.Height < 1 || len(p.Faces) > 100 {
+	if p.Width < 1 || p.Height < 1 || len(p.Faces) > 1000 {
 		return fmt.Errorf("invalid ML image dimensions or excessive faces")
 	}
 	// Detectors can predict boxes partially outside a preview. Clip for display;
@@ -393,6 +416,9 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 			continue
 		}
 		best, id := a.lib.config.ML.FaceSimilarity, int64(0)
+		if f.Timestamp != nil {
+			best = max(best, .7)
+		}
 		for _, person := range people {
 			if !used[person.id] {
 				if s := similarity(vectors[i], person.v); s > best {
@@ -400,7 +426,7 @@ func (a *AI) save(ctx context.Context, j aiJob, p mlPrediction) error {
 				}
 			}
 		}
-		box, _ := json.Marshal(f.Box)
+		box := faceBoxJSON(f)
 		var override int64
 		e := tx.QueryRowContext(ctx, `SELECT coalesce(p.merged_into,p.id) FROM face_overrides o JOIN people p ON p.id=o.person_id WHERE o.image_id=? AND o.signature=? AND o.model=? AND o.box=?`, j.ID, j.Signature, a.lib.config.ML.FaceModel, string(box)).Scan(&override)
 		if e == nil {

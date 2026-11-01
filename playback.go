@@ -168,13 +168,14 @@ func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, li
 	if err != nil {
 		return result, err
 	}
-	rows, err := a.read.QueryContext(ctx, `SELECT i.id,a.clip FROM catalog.images i JOIN ai_images a ON a.image_id=i.id AND a.signature=i.signature WHERE a.models=? AND a.error='' AND `+clause, append([]any{a.models}, args...)...)
+	rows, err := a.read.QueryContext(ctx, `SELECT i.id,coalesce(v.clip,a.clip) FROM catalog.images i JOIN ai_images a ON a.image_id=i.id AND a.signature=i.signature LEFT JOIN video_frames v ON v.image_id=i.id AND v.signature=i.signature AND v.models=a.models WHERE a.models=? AND a.error='' AND `+clause, append([]any{a.models}, args...)...)
 	if err != nil {
 		return result, err
 	}
 	defer rows.Close()
 	top := &ranking{}
 	heap.Init(top)
+	scores := map[string]float32{}
 	for rows.Next() {
 		var id string
 		var blob []byte
@@ -184,14 +185,15 @@ func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, li
 		if len(blob) != len(v)*4 {
 			continue
 		}
-		result.Total++
 		score := similarity(v, vectorBlob(blob))
-		if top.Len() < limit {
-			heap.Push(top, ranked{id, score})
-		} else if score > (*top)[0].Score || (score == (*top)[0].Score && id < (*top)[0].ID) {
-			heap.Pop(top)
-			heap.Push(top, ranked{id, score})
+		previous, ok := scores[id]
+		if !ok {
+			result.Total++
 		}
+		if !ok || score > previous {
+			scores[id] = score
+		}
+
 		if result.Total%256 == 0 {
 			runtime.Gosched()
 			if ctx.Err() != nil {
@@ -201,6 +203,14 @@ func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, li
 	}
 	if err = rows.Err(); err != nil {
 		return result, err
+	}
+	for id, score := range scores {
+		if top.Len() < limit {
+			heap.Push(top, ranked{id, score})
+		} else if score > (*top)[0].Score || (score == (*top)[0].Score && id < (*top)[0].ID) {
+			heap.Pop(top)
+			heap.Push(top, ranked{id, score})
+		}
 	}
 	result.Hits = make([]ranked, top.Len())
 	for i := len(result.Hits) - 1; i >= 0; i-- {
