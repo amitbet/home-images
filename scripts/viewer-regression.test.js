@@ -7,6 +7,31 @@ const source = fs.readFileSync('web/app.js', 'utf8');
 const viewerSource = source.slice(source.indexOf('function viewerSize('), source.indexOf('async function openImage(')) + source.slice(source.indexOf('function sizeViewerImage('), source.indexOf('window.addEventListener("resize"'));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('closing the viewer replaces its URL without navigating back', () => {
+  let close, replacement;
+  const elements = new Map();
+  const $ = id => {
+    if (!elements.has(id)) elements.set(id, {
+      style: {}, addEventListener(type, handler) { close = handler; },
+      pause() {}, removeAttribute() {}, load() {},
+    });
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    $, state: { viewerGeneration: 1 }, facesController: null,
+    clearViewerPreview() {}, pumpThumbnails() {}, stopPlay() {},
+    syncURL(replace) { replacement = replace; },
+    history: { back() { assert.fail('Closing must not navigate back'); } },
+    document: { fullscreenElement: null },
+  });
+  vm.runInContext('let closingViewerForNavigation = false;\n' + source.slice(
+    source.indexOf('$("viewer").addEventListener("close",'),
+    source.indexOf('$("closeViewer").onclick =')), context);
+  close();
+  assert.equal(replacement, true);
+  assert.equal(context.state.viewerGeneration, 2);
+});
+
 test('viewer history preserves the grid unless its query changes', async () => {
   let onPopstate, loads = 0, restores = 0, closes = 0;
   const viewer = { open: false };

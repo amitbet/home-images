@@ -260,11 +260,11 @@ window.addEventListener("popstate", async () => {
     restoringNavigation = false;
   }
 });
-function syncURL() {
+function syncURL(replace = false) {
   const p = params();
   p.set("view", state.view);
   p.set("offset", state.offset);
-  writeNavigationURL("/?" + p);
+  writeNavigationURL("/?" + p, replace);
 }
 function resetInputs() {
   for (const id of Object.values(fields)) $(id).value = "";
@@ -2182,8 +2182,7 @@ $("viewer").addEventListener("close", () => {
   facesController?.abort();
   stopPlay();
   if (closingViewerForNavigation) closingViewerForNavigation = false;
-  else if (new URLSearchParams(location.search).has("image") && history.state?.homeImages) history.back();
-  else syncURL();
+  else syncURL(true);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 });
 $("closeViewer").onclick = () => {
