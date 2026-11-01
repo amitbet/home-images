@@ -78,7 +78,8 @@ func (l *Library) videoFrame(ctx context.Context, p Photo, seconds float64) ([]b
 func (a *AI) indexNextVideo(ctx context.Context) error {
 	a.videoWorked = false
 	var j aiJob
-	err := a.db.QueryRowContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i INDEXED BY image_video_status LEFT JOIN ai_images a ON a.image_id=i.id WHERE NOT (`+photoOnlySQL+`) AND (a.image_id IS NULL OR a.signature!=i.signature OR a.models!=? OR (a.error!='' AND a.retry_at<=?)) ORDER BY i.id LIMIT 1`, a.models, time.Now().Unix()).Scan(&j.ID, &j.Signature, &j.Metadata)
+	// Read pool: the scan must not hold the write connection (see jobs).
+	err := a.read.QueryRowContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i INDEXED BY image_video_status LEFT JOIN ai_images a ON a.image_id=i.id WHERE NOT (`+photoOnlySQL+`) AND (a.image_id IS NULL OR a.signature!=i.signature OR a.models!=? OR (a.error!='' AND a.retry_at<=?)) ORDER BY i.id LIMIT 1`, a.models, time.Now().Unix()).Scan(&j.ID, &j.Signature, &j.Metadata)
 	if err == sql.ErrNoRows {
 		return nil
 	}

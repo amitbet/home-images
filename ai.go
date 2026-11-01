@@ -174,8 +174,11 @@ func waitContext(ctx context.Context, d time.Duration) bool {
 
 type aiJob struct{ ID, Signature, Metadata string }
 
+// Finding pending work scans the whole catalog, which takes seconds on a large
+// library. Run it on the read pool so it never holds the single write
+// connection that tag edits and other mutations wait on.
 func (a *AI) jobs(ctx context.Context, after string) ([]aiJob, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
+	rows, err := a.read.QueryContext(ctx, `SELECT i.id,i.signature,metadata_json(i.metadata) FROM catalog.images i LEFT JOIN ai_images a ON a.image_id=i.id
  WHERE `+photoOnlySQL+` AND i.id>? AND (a.image_id IS NULL OR a.signature!=i.signature OR a.models!=? OR (a.error!='' AND a.retry_at<=?)) ORDER BY i.id LIMIT 32`, after, a.models, time.Now().Unix())
 	if err != nil {
 		return nil, err
@@ -230,14 +233,17 @@ func (a *AI) Run(ctx context.Context) {
 		}
 		if len(jobs) == 0 {
 			// Restart the photo scan before spending time on lower-priority videos.
-			photos, e := a.jobs(ctx, "")
-			if e != nil {
-				a.setError(e)
-				continue
-			}
-			if len(photos) > 0 {
-				cursor = ""
-				continue
+			// A scan that already started from the beginning needs no repeat.
+			if cursor != "" {
+				photos, e := a.jobs(ctx, "")
+				if e != nil {
+					a.setError(e)
+					continue
+				}
+				if len(photos) > 0 {
+					cursor = ""
+					continue
+				}
 			}
 			if e := a.indexNextVideo(ctx); e != nil {
 				a.setError(e)
@@ -340,7 +346,20 @@ func (a *AI) recordFailure(ctx context.Context, j aiJob, e error) {
 	}
 }
 func (a *AI) cleanup(ctx context.Context) {
-	_, err := a.db.ExecContext(ctx, `DELETE FROM video_frames WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones);`)
+	// This runs every idle cycle. Look for orphans on the read pool first so
+	// the write connection is only taken when there is something to delete.
+	var orphaned bool
+	err := a.read.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM video_frames WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones)) OR EXISTS(SELECT 1 FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones)) OR EXISTS(SELECT 1 FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones))`).Scan(&orphaned)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.setError(err)
+		}
+		return
+	}
+	if !orphaned {
+		return
+	}
+	_, err = a.db.ExecContext(ctx, `DELETE FROM video_frames WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM faces WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones); DELETE FROM ai_images WHERE image_id NOT IN (SELECT id FROM catalog.images UNION SELECT id FROM catalog.image_tombstones);`)
 	if err != nil && ctx.Err() == nil {
 		a.setError(err)
 	}
