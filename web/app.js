@@ -1696,6 +1696,7 @@ async function openImage(i, external = null) {
     .filter(Boolean)
     .join(" · ");
   $("original").href = photo.original_url;
+  $("original").download = displayFilename(photo.filename);
   $("viewerPosition").textContent = external
     ? "Playing your selection"
     : `${number(state.offset + state.index + 1)} / ${number(state.total)} in selection`;
