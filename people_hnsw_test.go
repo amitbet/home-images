@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -71,6 +72,12 @@ func TestPersonHNSWPersistenceAndRevision(t *testing.T) {
 	rebound, err := readPersonHNSW(path)
 	if err != nil || rebound.Root != l.rootPath || rebound.Revision != loaded.revision || !bytes.Equal(rebound.Graphs[3], saved.Graphs[3]) {
 		t.Fatal("offline cache was not safely adopted", err)
+	}
+	newID := insert(vector{.6, .8, 0}, nil)
+	a.personIndex = nil // new vectors arrived after the last persisted snapshot
+	loaded, err = a.loadPersonHNSW(ctx)
+	if err != nil || len(loaded.vectors[newID]) != 1 {
+		t.Fatal("restart lost appended representative", err)
 	}
 	if _, err = a.db.Exec("UPDATE people SET merged_into=? WHERE id=?", other, alias); err != nil {
 		t.Fatal(err)
@@ -267,7 +274,15 @@ func checkPersonHNSWLiveRecall(t *testing.T, index *personHNSW) {
 	if len(ids) < 10 {
 		t.Fatal("snapshot has too few groups")
 	}
-	for _, source := range ids[:10] {
+	ids = ids[:10]
+	if raw := os.Getenv("HOMEIMAGES_TEST_PEOPLE_SOURCE"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || len(index.vectors[id]) == 0 {
+			t.Fatal("invalid benchmark source", raw)
+		}
+		ids = []int64{id}
+	}
+	for _, source := range ids {
 		started := time.Now()
 		candidates, err := index.candidates(context.Background(), source, 1024)
 		if err != nil {
@@ -370,5 +385,45 @@ func TestPersonHNSWRecallAndDimensions(t *testing.T) {
 	}
 	if hits < 95 {
 		t.Fatalf("top-10 recall %d/100", hits)
+	}
+	// A heavily merged person must retain all appearances without running a
+	// separate wide ANN search for every alias or sampling away rare matches.
+	if _, err = a.db.Exec("UPDATE people SET merged_into=1 WHERE id BETWEEN 2 AND 100"); err != nil {
+		t.Fatal(err)
+	}
+	index, err = a.loadPersonHNSW(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := index.candidates(context.Background(), 1, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type scored struct {
+		id    int64
+		score float32
+	}
+	var exact []scored
+	for id, vs := range index.vectors {
+		if id == 1 {
+			continue
+		}
+		var score float32
+		for _, v := range index.vectors[1] {
+			for _, other := range vs {
+				score = max(score, similarity(v, other))
+			}
+		}
+		exact = append(exact, scored{id, score})
+	}
+	sort.Slice(exact, func(i, j int) bool { return exact[i].score > exact[j].score })
+	hits = 0
+	for _, p := range exact[:25] {
+		if candidates[p.id] {
+			hits++
+		}
+	}
+	if hits < 24 {
+		t.Fatalf("merged group top-25 recall %d/25", hits)
 	}
 }

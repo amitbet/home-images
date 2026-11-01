@@ -153,6 +153,15 @@ func (a *AI) loadPersonHNSW(ctx context.Context) (*personHNSW, error) {
 			return index, nil
 		}
 	}
+	// Indexing can append representatives between the last cache write and a
+	// restart. Restore that topology first; the reuse check below validates every
+	// existing node before adding new vectors or rebuilding on replacements.
+	if cached != nil && a.personIndex == nil {
+		if old, e := restorePersonHNSW(*cached); e == nil {
+			old.revision = ""
+			a.personIndex = old
+		}
+	}
 	index := &personHNSW{revision: revision, vectors: map[int64][]vector{}, groups: map[int64]int64{}, graphs: map[int]*hnsw.Graph[int64]{}}
 	// Most writes only add representatives or change their merged group. Reuse
 	// graph topology for those; deletion/replacement takes the safe rebuild path.
@@ -325,27 +334,113 @@ func restorePersonHNSW(saved savedPersonHNSW) (index *personHNSW, err error) {
 	return index, nil
 }
 
-// Search every retained source representative, union the groups, then rerank
-// using their original dot products. k expands when eligibility is restrictive.
-func (index *personHNSW) candidates(ctx context.Context, source int64, k int) (map[int64]bool, error) {
-	groups := map[int64]bool{}
-	for _, v := range index.vectors[source] {
+// Existing representatives already have graph nodes. For very large merged
+// groups, expand their shared neighborhoods instead of running thousands of
+// nearly identical vector searches. Every retained source node participates.
+func (index *personHNSW) groupNeighborhood(ctx context.Context, source int64, depth int) (map[int64]float32, error) {
+	scores := map[int64]float32{}
+	for id, group := range index.groups {
+		if group != source {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		g := index.graphs[len(v)]
-		if k >= g.Len() {
-			// Exhaustive fallback also preserves complete paging for small graphs.
-			for id := range index.vectors {
-				groups[id] = true
+		for _, g := range index.graphs {
+			query, ok := g.Lookup(id)
+			if !ok {
+				continue
 			}
-			continue
+			visited := map[int64]bool{id: true}
+			frontier := []int64{id}
+			for hop := 0; hop < depth; hop++ {
+				var next []int64
+				for _, key := range frontier {
+					for _, n := range g.Neighbors(key) {
+						if visited[n.Key] {
+							continue
+						}
+						visited[n.Key] = true
+						next = append(next, n.Key)
+						other := index.groups[n.Key]
+						if other == source {
+							continue
+						}
+						score := similarity(query, n.Value)
+						if old, ok := scores[other]; !ok || score > old {
+							scores[other] = score
+						}
+					}
+				}
+				frontier = next
+			}
 		}
-		for _, n := range g.Search(normalizedPersonVector(v), k) {
-			groups[index.groups[n.Key]] = true
+	}
+	return scores, nil
+}
+
+// Exact reranking uses every source representative after graph candidate lookup.
+func (index *personHNSW) candidates(ctx context.Context, source int64, k int) (map[int64]bool, error) {
+	groups := map[int64]bool{}
+	scores := map[int64]float32{}
+	if k >= len(index.groups) {
+		for group := range index.vectors {
+			if group != source {
+				groups[group] = true
+			}
+		}
+		return groups, nil
+	}
+	if len(index.vectors[source]) > 64 {
+		depth := 2
+		if k > 4096 {
+			depth = 3
+		}
+		var err error
+		scores, err = index.groupNeighborhood(ctx, source, depth)
+		if err != nil {
+			return nil, err
+		}
+		for group := range scores {
+			groups[group] = true
+		}
+	} else {
+		for _, v := range index.vectors[source] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			g := index.graphs[len(v)]
+			if k >= g.Len() {
+				// Exhaustive fallback also preserves complete paging for small graphs.
+				for id := range index.vectors {
+					groups[id] = true
+				}
+				continue
+			}
+			query := normalizedPersonVector(v)
+			for _, n := range g.Search(query, k) {
+				group := index.groups[n.Key]
+				groups[group] = true
+				score := similarity(query, n.Value)
+				if old, ok := scores[group]; !ok || score > old {
+					scores[group] = score
+				}
+			}
 		}
 	}
 	delete(groups, source)
+	if k < len(index.groups) && len(groups) > k {
+		ids := sortedPersonIDs(groups)
+		sort.Slice(ids, func(i, j int) bool {
+			if scores[ids[i]] == scores[ids[j]] {
+				return ids[i] < ids[j]
+			}
+			return scores[ids[i]] > scores[ids[j]]
+		})
+		for _, id := range ids[k:] {
+			delete(groups, id)
+		}
+	}
 	return groups, nil
 }
 

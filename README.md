@@ -427,6 +427,9 @@ People are grouped conservatively using representative face-vector similarity.
 The similar-people review uses an HNSW candidate index followed by exact
 similarity scoring. It retains merged representatives and checks current photo
 visibility, dismissals, and same-photo exclusions before returning suggestions.
+Heavily merged groups expand the shared graph neighborhoods of all their
+representatives instead of repeating thousands of similar searches. Exact
+reranking of the shortlist still uses every retained representative.
 `data_dir/people.hnsw` is a disposable cache beside SQLite; missing, corrupt,
 wrong-model, or stale caches rebuild automatically on the next review request.
 The first build can take several minutes for a large library. New representatives

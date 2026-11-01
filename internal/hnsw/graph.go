@@ -492,3 +492,19 @@ func (h *Graph[K]) Lookup(key K) (Vector, bool) {
 	}
 	return node.Value, ok
 }
+
+// Neighbors returns outgoing base-layer links for an existing indexed node.
+func (h *Graph[K]) Neighbors(key K) []Node[K] {
+	if len(h.layers) == 0 {
+		return nil
+	}
+	n := h.layers[0].nodes[key]
+	if n == nil {
+		return nil
+	}
+	out := make([]Node[K], 0, len(n.neighbors))
+	for _, neighbor := range n.neighbors {
+		out = append(out, neighbor.Node)
+	}
+	return out
+}
