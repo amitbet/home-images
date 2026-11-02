@@ -1004,7 +1004,7 @@ function renderMergeImageCount(){
  $("mergeSelectionCount").textContent=mergeSelection.size?`${mergeSelection.size} groups selected - ${count}`:"No groups selected";
  if($("mergeConfirm").open){
   $("mergeKeepName").textContent=`Keep ${state.editing.name||"Person "+state.editing.id} and add these ${mergeSelection.size} groups (${count}):`;
-  $("confirmMergeGroups").disabled=mergeSelectedImages===null;
+  $("confirmMergeGroups").disabled=!mergeSelection.size||mergeSelectedImages===null;
  }
 }
 function updateMergeImageCount(){
@@ -1064,7 +1064,7 @@ function mergeChoice(person) {
   label.append(input);
   return label;
 }
-function mergeGroupRow(person) {
+function mergeGroupRow(person, selectable = true) {
   const row = text("article", "", "face-suggestion merge-card");
   const image = new Image();
   previewImage(image, person.image_url || `/api/people/${person.id}/image`);
@@ -1077,8 +1077,9 @@ function mergeGroupRow(person) {
   const year = text("span", years, "merge-years");
   year.title = "Years taken (from photo capture dates)";
   info.append(text("strong", image.alt), text("p", personMediaLabel(person)), year);
-  row.append(image, info, mergeChoice(person));
-  row.addEventListener("click", (event) => {
+  row.append(image, info);
+  if (selectable) row.append(mergeChoice(person));
+  if (selectable) row.addEventListener("click", (event) => {
     if (event.target.closest("a, button, label, input")) return;
     row.querySelector('input[data-merge-group]').click();
   });
@@ -1274,8 +1275,17 @@ $("mergePerson").onclick = () => {
   $("mergeKeepName").textContent = `Keep ${state.editing.name || "Person " + state.editing.id} and add these ${mergeSelection.size} groups:`;
   $("mergeConfirmGroups").replaceChildren();
   for (const person of mergeSelection.values()) {
-    const row = mergeGroupRow(person);
-    row.querySelector(".merge-choice").remove();
+    const row = mergeGroupRow(person, false);
+    const drop = text("button", "Not a match", "text-button dismiss-match");
+    drop.type = "button";
+    drop.setAttribute("aria-label", `${person.name || "Person " + person.id} is not the same person`);
+    drop.onclick = () => {
+      if ($("mergeConfirm").getAttribute("aria-busy") === "true") return;
+      mergeSelection.delete(person.id);
+      row.remove();
+      updateMergeSelection();
+    };
+    row.append(drop);
     $("mergeConfirmGroups").append(row);
   }
   $("mergeConfirmError").textContent = "";
@@ -1284,6 +1294,7 @@ $("mergePerson").onclick = () => {
 };
 $("cancelMergeConfirm").onclick = () => closeModal("mergeConfirm");
 $("confirmMergeGroups").onclick = async () => {
+  if (!mergeSelection.size || mergeSelectedImages === null) return;
   const button = $("confirmMergeGroups");
   button.disabled = true;
   const originalLabel=button.textContent;
