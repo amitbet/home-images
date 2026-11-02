@@ -1734,6 +1734,7 @@ dialog::backdrop {
 .merge-search-status:not([hidden]) {display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--muted);}
 #mergeConfirm {width:min(1000px,94vw);}
 #mergeConfirmGroups {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:12px;}
+#mergeConfirmGroups .merge-card {cursor:default;}
 #mergeConfirmGroups .merge-card img {width:100%;height:auto;aspect-ratio:1;object-fit:cover;}
 @media(max-width:600px){#personEditor.merge-workspace{padding:16px;}#personEditor #personSuggestions{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}#personEditor #personSuggestions .face-suggestion{padding:8px;}#personEditor .merge-review-footer{bottom:-16px;}}
 
