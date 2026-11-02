@@ -31,6 +31,21 @@ func testJPEG(t *testing.T, w, h int) []byte {
 	}
 	return buf.Bytes()
 }
+func TestVideoThumbnailsExcludedFromPruning(t *testing.T) {
+	cache := newThumbnailCache(t.TempDir())
+	data := testJPEG(t, 16, 16)
+	photoKey := strings.Repeat("a", 64)
+	videoKey := "video-" + strings.Repeat("b", 64)
+	for _, key := range []string{photoKey, videoKey} {
+		if err := cache.store(key, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache.prune(1)
+	if cache.exists(photoKey) || !cache.exists(videoKey) {
+		t.Fatal("pruning must evict the ordinary thumbnail but retain the video thumbnail")
+	}
+}
 func TestThumbnailCacheSingleFlightAndPersistence(t *testing.T) {
 	cache := newThumbnailCache(t.TempDir())
 	key := strings.Repeat("a", 64)

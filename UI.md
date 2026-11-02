@@ -12,10 +12,13 @@ the source size or modification time changes. Concurrent requests for the same
 missing preview share one decode. Viewer and Echo image requests retain their
 requested resolution; thumbnail sizing does not reduce full-size delivery.
 
-Small previews are also generated in the background, and ML preview decoding
-seeds the gallery cache. Warming uses a single low-priority decoder, yields to
-foreground activity, and pauses with indexing. The cache has an approximately
-4 GiB budget with periodic eviction of older generated files. Its contents are
+Video thumbnails are pre-created in the background, and ML preview decoding
+seeds the gallery cache. Warming uses a single low-priority decoder and yields to
+foreground activity. The cache has an approximately
+4 GiB budget with periodic eviction of older generated files. Video gallery
+thumbnails are stored separately in `data_dir/video-thumbnails-v1` and are not
+subject to that budget. Source changes create new entries, so old video entries
+may need manual cleanup. The cache contents are
 disposable; originals and annotations are never removed by cache cleanup.
 
 Cold foreground decodes run in separate, CPU-limited processes. Only visible

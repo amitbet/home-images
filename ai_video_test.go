@@ -228,13 +228,22 @@ func TestVideoFramesInferConcurrentlyInTimeOrder(t *testing.T) {
 	l.Scan(ctx)
 	var mu sync.Mutex
 	active, peak, requests := 0, 0, 0
+	overlapped := make(chan struct{})
+	var overlapOnce sync.Once
 	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		active++
 		requests++
 		peak = max(peak, active)
+		if active >= 2 {
+			overlapOnce.Do(func() { close(overlapped) })
+		}
 		mu.Unlock()
-		time.Sleep(150 * time.Millisecond)
+		select {
+		case <-overlapped:
+		case <-time.After(5 * time.Second):
+		case <-r.Context().Done():
+		}
 		mu.Lock()
 		active--
 		mu.Unlock()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -104,6 +105,10 @@ func TestVideoConversion(t *testing.T) {
 	red, green, blue, _ := img.At(img.Bounds().Dx()/2, img.Bounds().Dy()/2).RGBA()
 	if red < 30000 || red < green*2 || red < blue*2 {
 		t.Fatalf("thumbnail does not show red video frame: %d %d %d", red, green, blue)
+	}
+	key, err := l.previewKey(Photo{Path: "old.MOV"}, "image:480:360:72")
+	if err != nil || !strings.HasPrefix(key, "video-") || !l.thumbnails.exists(key) {
+		t.Fatalf("video thumbnail not saved in persistent cache: key=%q err=%v", key, err)
 	}
 	resp, err := s.Client().Get(s.URL + "/api/images/" + imageID("old.MOV") + "/video")
 	if err != nil {

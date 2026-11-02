@@ -58,9 +58,19 @@ func (l *Library) previewKey(p Photo, variant string) (string, error) {
 		variant += fmt.Sprintf(":video-frame-v1:ffmpeg=%t", err == nil)
 	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "v1|%s|%s|%d|%d|%s", l.rootPath, p.Path, info.ModTime().UnixNano(), info.Size(), variant))
-	return hex.EncodeToString(sum[:]), nil
+	key := hex.EncodeToString(sum[:])
+	if isVideo(p.Path) && strings.HasPrefix(variant, fmt.Sprintf("image:%d:%d:%d:video-frame-v1:", thumbnailWidth, thumbnailHeight, thumbnailQuality)) {
+		key = "video-" + key
+	}
+	return key, nil
 }
-func (c *thumbnailCache) path(key string) string { return filepath.Join(c.root, key[:2], key+".jpg") }
+func (c *thumbnailCache) path(key string) string {
+	if strings.HasPrefix(key, "video-") {
+		hash := strings.TrimPrefix(key, "video-")
+		return filepath.Join(filepath.Dir(c.root), "video-thumbnails-v1", hash[:2], hash+".jpg")
+	}
+	return filepath.Join(c.root, key[:2], key+".jpg")
+}
 func (c *thumbnailCache) exists(key string) bool {
 	info, err := os.Stat(c.path(key))
 	return err == nil && info.Size() > 4 && info.Size() <= 32<<20
@@ -299,6 +309,9 @@ func (l *Library) warmThumbnails(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
+			if !isVideo(p.Path) {
+				continue
+			}
 			key, err := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", thumbnailWidth, thumbnailHeight, thumbnailQuality))
 			if err != nil {
 				continue
@@ -312,7 +325,16 @@ func (l *Library) warmThumbnails(ctx context.Context) {
 					return
 				}
 			}
-			if _, err = l.aiPreview(ctx, p); err != nil && ctx.Err() == nil {
+			_, err = l.thumbnails.get(ctx, key, func(ctx context.Context) ([]byte, error) {
+				select {
+				case l.previewDecoder <- struct{}{}:
+					defer func() { <-l.previewDecoder }()
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				return l.processPreview(ctx, p, thumbnailWidth, thumbnailHeight, thumbnailQuality)
+			})
+			if err != nil && ctx.Err() == nil {
 				log.Printf("Thumbnail %s: %v", p.ID, err)
 			}
 			completed++
