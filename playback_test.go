@@ -335,3 +335,18 @@ func TestPlaybackPeopleAnyAndNone(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaybackKeepsSnapshotWhileIndexingAdvances(t *testing.T) {
+	l, s, _ := fixture(t)
+	first := getPlayback(t, s, "mode=metadata&order=sequential")
+	// Indexing bumps selectionRevision constantly; requests must keep the snapshot.
+	l.ai.selectionRevision.Add(1)
+	if next := getPlayback(t, s, "mode=metadata&order=sequential"); next.Playback.CachedAt != first.Playback.CachedAt {
+		t.Fatal("indexing revision forced a synchronous rebuild", next)
+	}
+	// User edits still invalidate immediately.
+	l.ai.editRevision.Add(1)
+	if next := getPlayback(t, s, "mode=metadata&order=sequential"); next.Playback.CachedAt == first.Playback.CachedAt {
+		t.Fatal("edit revision kept a stale snapshot", next)
+	}
+}

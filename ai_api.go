@@ -65,7 +65,7 @@ func (a *AI) mutation(fn endpoint) http.HandlerFunc {
 		// Invalidate snapshots on API edits even if the client disconnects after
 		// a committed write. This revision is independent of pooled connections.
 		if r.URL.Path != "/api/curation" && !strings.HasSuffix(r.URL.Path, "/merge-preview") {
-			defer a.selectionRevision.Add(1)
+			defer func() { a.editRevision.Add(1); a.selectionRevision.Add(1) }()
 		} // These POST endpoints only read.
 		if err := fn(w, r); err != nil {
 			status, msg := 500, "Request failed"

@@ -338,6 +338,7 @@ func (l *Library) runDuplicateBatch(ctx context.Context, id, action string) {
 	state := "completed"
 	defer func() {
 		if l.ai != nil {
+			l.ai.editRevision.Add(1)
 			l.ai.selectionRevision.Add(1)
 		}
 		if ctx.Err() != nil {

@@ -55,10 +55,14 @@ type AI struct {
 	playMu              sync.Mutex
 	playCache           map[string]playSelection
 	selectionRevision   atomic.Uint64
-	refreshCtx          context.Context
-	refreshCancel       context.CancelFunc
-	refreshWG           sync.WaitGroup
-	playRefreshing      bool
+	// editRevision counts user edits only; indexing never bumps it, so
+	// playback can drop snapshots immediately on edits yet keep serving
+	// them while background indexing keeps changing selectionRevision.
+	editRevision   atomic.Uint64
+	refreshCtx     context.Context
+	refreshCancel  context.CancelFunc
+	refreshWG      sync.WaitGroup
+	playRefreshing bool
 }
 
 func newAI(l *Library) (*AI, error) {

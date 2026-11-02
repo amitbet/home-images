@@ -18,8 +18,15 @@ import (
 
 const playbackTTL = 2 * time.Minute
 
+// Indexing (especially video frames) bumps selectionRevision every few seconds.
+// That only schedules a background refresh, at most this often, so playback
+// never waits for a full selection rebuild while indexing runs. User edits
+// bump editRevision, which is part of the cache key and applies immediately.
+const playbackRevisionRefresh = 30 * time.Second
+
 type playSelection struct {
 	Generation string
+	Revision   uint64
 	Mode       string
 	Hits       []ranked
 	Total      int
@@ -236,13 +243,17 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 	if scan := a.lib.Status().LastScan; scan != nil {
 		generation = *scan
 	}
-	key := fmt.Sprintf("%s|%s|%d|%s", a.lib.rootPath, a.models, a.selectionRevision.Load(), filters.Encode())
+	revision := a.selectionRevision.Load()
+	key := fmt.Sprintf("%s|%s|%d|%s", a.lib.rootPath, a.models, a.editRevision.Load(), filters.Encode())
 	a.playMu.Lock()
 	cached, ok := a.playCache[key]
 	if ok && r.URL.Query().Get("refresh") != "1" {
 		// Keep frame requests fast while an old snapshot is refreshed. Every
 		// returned ID is still checked against current filters and file state.
-		if (time.Since(cached.Created) >= playbackTTL || cached.Generation != generation) && !a.playRefreshing {
+		age := time.Since(cached.Created)
+		stale := age >= playbackTTL || cached.Generation != generation ||
+			(cached.Revision != revision && age >= playbackRevisionRefresh)
+		if stale && !a.playRefreshing {
 			a.playRefreshing = true
 			a.refreshWG.Add(1)
 			go func() {
@@ -260,7 +271,7 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 				a.playMu.Lock()
 				a.playRefreshing = false
 				if _, exists := a.playCache[key]; err == nil && exists {
-					next.Generation = generation
+					next.Generation, next.Revision = generation, revision
 					a.playCache[key] = next
 				}
 				a.playMu.Unlock()
@@ -280,7 +291,7 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 	if err != nil {
 		return selection, err
 	}
-	selection.Generation = generation
+	selection.Generation, selection.Revision = generation, revision
 	a.playMu.Lock()
 	if a.playCache == nil {
 		a.playCache = map[string]playSelection{}
