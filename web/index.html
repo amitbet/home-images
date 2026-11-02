@@ -386,7 +386,7 @@
       <p id="suggestionProgress" aria-live="polite"></p></div>
       <div id="personSuggestions" aria-live="polite"></div>
       <button id="refreshSuggestions" class="secondary" type="button" hidden>Search again using merged groups</button>
-      <button id="moreSuggestions" class="secondary" type="button" hidden>Show 25 more matches</button>
+      <span id="moreSuggestionsControls" hidden><label for="suggestionPageSize">Matches to show</label> <select id="suggestionPageSize"><option>25</option><option>50</option><option>100</option><option>250</option></select> <button id="moreSuggestions" class="secondary" type="button">Show more matches</button></span>
       <details id="manualMergeSearch"><summary>Find another group by name</summary><h4>Find another group</h4>
       <label for="mergeSearch">Search groups to add to this person</label>
       <input id="mergeSearch" placeholder="Search names" autocomplete="off" />

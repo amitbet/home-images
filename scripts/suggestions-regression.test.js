@@ -13,7 +13,7 @@ function harness(api) {
     state: {editing: {id:956}},
   });
   vm.runInContext(`let suggestionController,suggestionGeneration=0,suggestionPool=[],suggestionShown=0,suggestionHasMore=false,suggestedGroups=[]; const dismissedSuggestionIds=new Set();
-    function appendSuggestionPage(){suggestionShown=Math.min(suggestionShown+25,suggestionPool.length);updateSuggestionProgress();}
+    function appendSuggestionPage(count=25){suggestionShown=Math.min(suggestionShown+count,suggestionPool.length);updateSuggestionProgress();}
     function updateSuggestionProgress(){$('moreSuggestions').hidden=suggestionShown>=suggestionPool.length&&!suggestionHasMore;}
     ` + flow, context);
   return {context,nodes,read:expression=>JSON.parse(vm.runInContext(`JSON.stringify(${expression})`,context))};
@@ -30,6 +30,16 @@ test('first results do not wait for 1000 matches; more preserves shown order and
   assert.equal(h.read('new Set(suggestionPool.map(p=>p.id)).size'),1000);
   assert.equal(h.read('suggestionShown'),50);
   await h.context.loadMorePersonSuggestions();assert.equal(calls.length,2);assert.equal(h.read('suggestionShown'),75);
+});
+test('selected batch size applies to fetched and already loaded matches', async () => {
+  const h=harness(async url=>url.includes('preview=true')?{items:items(1,25),has_more:true}:{items:items(1,1000)});
+  await h.context.loadPersonSuggestions(h.context.state.editing);
+  h.nodes.set('suggestionPageSize',{value:'100'});
+  await h.context.loadMorePersonSuggestions();
+  assert.equal(h.read('suggestionShown'),125);
+  h.nodes.get('suggestionPageSize').value='250';
+  await h.context.loadMorePersonSuggestions();
+  assert.equal(h.read('suggestionShown'),375);
 });
 test('loading more cannot resurrect dismissed matches', async () => {
   const h=harness(async url=>url.includes('preview=true')?{items:items(1,25),has_more:true}:{items:items(1,1000)});

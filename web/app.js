@@ -2637,10 +2637,10 @@ document.addEventListener("visibilitychange", () => {
     acquireWakeLock();
 });
 
-function appendSuggestionPage() {
+function appendSuggestionPage(count = 25) {
   const person = state.editing;
   const container = $("personSuggestions");
-  const batch = suggestionPool.slice(suggestionShown, suggestionShown + 25);
+  const batch = suggestionPool.slice(suggestionShown, suggestionShown + count);
   suggestionShown += batch.length;
   for (const candidate of batch) {
     if (suggestedGroups.some(p => p.id === candidate.id)) continue;
@@ -2667,6 +2667,7 @@ function appendSuggestionPage() {
 }
 function updateSuggestionProgress(){
   $("moreSuggestions").hidden=suggestionShown>=suggestionPool.length&&!suggestionHasMore;
+  $("moreSuggestionsControls").hidden=$("moreSuggestions").hidden;
   $("suggestionProgress").textContent=`Showing ${suggestionShown} ranked groups. Select matches, then show more until the choices no longer look right. Up to 5,000 groups per merge.`;
 }
 $("refreshSuggestions").onclick=()=>loadPersonSuggestions(state.editing);
@@ -2680,9 +2681,9 @@ async function loadPersonSuggestions(person) {
   const container=$("personSuggestions");
   const generation=++suggestionGeneration;
   suggestedGroups=[];suggestionPool=[];suggestionShown=0;suggestionHasMore=false;dismissedSuggestionIds.clear();
-  $("moreSuggestions").disabled=false;$("moreSuggestions").textContent="Show 25 more matches";
+  $("moreSuggestions").disabled=false;$("moreSuggestions").textContent="Show more matches";
   $("refreshSuggestions").hidden=true;
-  $("moreSuggestions").hidden=true;$("suggestionProgress").textContent="";updateMergeSelection();
+  $("moreSuggestions").hidden=true;$("moreSuggestionsControls").hidden=true;$("suggestionProgress").textContent="";updateMergeSelection();
   container.setAttribute("aria-busy","true");
   const loading=text("div","","suggestions-loading");loading.setAttribute("role","status");
   const spinner=text("span","","loading-spinner");spinner.setAttribute("aria-hidden","true");
@@ -2700,7 +2701,8 @@ async function loadPersonSuggestions(person) {
 }
 
 async function loadMorePersonSuggestions() {
-  if(suggestionShown<suggestionPool.length){appendSuggestionPage();return;}
+  const count = Number($("suggestionPageSize").value) || 25;
+  if(suggestionShown<suggestionPool.length){appendSuggestionPage(count);return;}
   if(!suggestionHasMore||$("moreSuggestions").disabled)return;
   const person=state.editing,generation=suggestionGeneration,controller=suggestionController;
   const button=$("moreSuggestions");button.disabled=true;button.textContent="Finding more matches…";
@@ -2710,9 +2712,9 @@ async function loadMorePersonSuggestions() {
     const shown=suggestionPool.slice(0,suggestionShown).filter(p=>!dismissedSuggestionIds.has(p.id));
     const seen=new Set(shown.map(p=>p.id));
     suggestionPool=[...shown,...result.items.filter(p=>!seen.has(p.id)&&!dismissedSuggestionIds.has(p.id))];
-    suggestionShown=shown.length;suggestionHasMore=false;appendSuggestionPage();
+    suggestionShown=shown.length;suggestionHasMore=false;appendSuggestionPage(count);
   } catch(e) {if(e.name!=="AbortError"&&generation===suggestionGeneration)$("editError").textContent=e.message;}
-  finally {if(generation===suggestionGeneration){button.disabled=false;button.textContent="Show 25 more matches";updateSuggestionProgress();}}
+  finally {if(generation===suggestionGeneration){button.disabled=false;button.textContent="Show more matches";updateSuggestionProgress();}}
 }
 
 function confirmPersonAction(message) {
