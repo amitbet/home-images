@@ -42,7 +42,7 @@ func TestAIPipelineBoundedConcurrentAndSerialCommit(t *testing.T) {
 					return mlPrediction{}, ctx.Err()
 				}
 			},
-			func(r aiPipelineResult) error {
+			func(r aiPipelineResult[aiJob]) error {
 				if seen[r.job.ID] {
 					t.Error("duplicate commit", r.job.ID)
 				}
@@ -83,7 +83,7 @@ func TestAIPipelineOutageCancelsRemainingWork(t *testing.T) {
 			<-ctx.Done()
 			return mlPrediction{}, ctx.Err()
 		},
-		func(r aiPipelineResult) error {
+		func(r aiPipelineResult[aiJob]) error {
 			if r.inferenceError {
 				return r.err
 			}

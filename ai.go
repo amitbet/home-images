@@ -291,7 +291,7 @@ func (a *AI) Run(ctx context.Context) {
 				a.pipeline.inferred.Add(1)
 				return prediction, err
 			},
-			func(result aiPipelineResult) error {
+			func(result aiPipelineResult[aiJob]) error {
 				if result.inferenceError {
 					a.mu.Lock()
 					a.online = false

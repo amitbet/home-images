@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-type preparedAIJob struct {
-	job     aiJob
+type preparedAIJob[T any] struct {
+	job     T
 	preview []byte
 	err     error
 }
-type aiPipelineResult struct {
+type aiPipelineResult[T any] struct {
 	preview        []byte
-	job            aiJob
+	job            T
 	prediction     mlPrediction
 	err            error
 	inferenceError bool
@@ -22,15 +22,15 @@ type aiPipelineResult struct {
 // One producer, a bounded preview queue, concurrent remote inference, and one
 // consumer. A remote outage cancels and drains the batch; uncommitted jobs remain
 // eligible in SQL and are retried without advancing the caller's cursor.
-func runAIPipeline(ctx context.Context, jobs []aiJob, workers int,
-	prepare func(context.Context, aiJob) ([]byte, error),
+func runAIPipeline[T any](ctx context.Context, jobs []T, workers int,
+	prepare func(context.Context, T) ([]byte, error),
 	predict func(context.Context, []byte) (mlPrediction, error),
-	consume func(aiPipelineResult) error) error {
+	consume func(aiPipelineResult[T]) error) error {
 	workers = max(1, min(4, workers))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	prepared := make(chan preparedAIJob, 2)
-	results := make(chan aiPipelineResult, 2)
+	prepared := make(chan preparedAIJob[T], 2)
+	results := make(chan aiPipelineResult[T], 2)
 	var producer, consumers sync.WaitGroup
 	producer.Add(1)
 	go func() {
@@ -42,7 +42,7 @@ func runAIPipeline(ctx context.Context, jobs []aiJob, workers int,
 			}
 			preview, err := prepare(ctx, job)
 			select {
-			case prepared <- preparedAIJob{job, preview, err}:
+			case prepared <- preparedAIJob[T]{job, preview, err}:
 			case <-ctx.Done():
 				return
 			}
@@ -56,7 +56,7 @@ func runAIPipeline(ctx context.Context, jobs []aiJob, workers int,
 				if ctx.Err() != nil {
 					return
 				}
-				result := aiPipelineResult{job: work.job, err: work.err, preview: work.preview}
+				result := aiPipelineResult[T]{job: work.job, err: work.err, preview: work.preview}
 				if work.err == nil {
 					result.prediction, result.err = predict(ctx, work.preview)
 					result.inferenceError = result.err != nil

@@ -9,8 +9,11 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestVideoSamplingCoversWholeRecording(t *testing.T) {
@@ -183,4 +186,95 @@ func TestVideoIndexPeopleFramesAndFilters(t *testing.T) {
 		t.Fatal("stale frame exposed", response.Status)
 	}
 
+}
+
+func TestVideoSceneScanUsesKeyframes(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("FFmpeg required")
+	}
+	l, _, root := fixture(t)
+	path := filepath.Join(root, "cut.mp4")
+	// Red then blue with a keyframe every half second; the cut lands on one.
+	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=10:d=2", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=10:d=2",
+		"-filter_complex", "[0:v][1:v]concat=n=2:v=1", "-c:v", "mpeg4", "-g", "5", "-y", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	l.config.FFmpeg = "ffmpeg"
+	times := l.videoSamplingPlan(context.Background(), Photo{AbsolutePath: path}, 4)
+	for _, at := range times {
+		if math.Abs(at-2) < .01 {
+			return
+		}
+	}
+	t.Fatalf("scene cut missing: %v", times)
+}
+
+func TestVideoFramesInferConcurrentlyInTimeOrder(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("FFmpeg required")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("FFprobe required")
+	}
+	l, s, root := fixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "long.mp4")
+	// Every sample differs, so none is dropped as a duplicate.
+	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=64x64:r=5", "-t", "60", "-c:v", "mpeg4", "-y", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	l.Scan(ctx)
+	var mu sync.Mutex
+	active, peak, requests := 0, 0, 0
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		active++
+		requests++
+		peak = max(peak, active)
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(syntheticPrediction())
+	}))
+	defer worker.Close()
+	l.ai.ml.config.URL = worker.URL
+	l.config.ML.URL = worker.URL
+	l.config.ML.Concurrency = 3
+	j := testJob(t, l, "long.mp4")
+	var p Photo
+	if err := json.Unmarshal([]byte(j.Metadata), &p); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ai.indexVideo(ctx, j, p); err != nil {
+		t.Fatal(err)
+	}
+	if peak < 2 {
+		t.Fatalf("inference never overlapped: peak %d of %d requests", peak, requests)
+	}
+	rows, err := l.ai.db.Query("SELECT timestamp FROM video_frames WHERE image_id=? ORDER BY rowid", j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var stored []float64
+	for rows.Next() {
+		var at float64
+		if err = rows.Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		stored = append(stored, at)
+	}
+	if len(stored) != requests || !sort.Float64sAreSorted(stored) {
+		t.Fatalf("frames %v for %d requests", stored, requests)
+	}
+	// The same face in every frame: one group, credited to its first appearance.
+	var tags []faceTag
+	if getJSON(t, s, "/api/images/"+j.ID+"/faces", &tags) != 200 || len(tags) != 1 || tags[0].Timestamp == nil ||
+		*tags[0].Timestamp != stored[0] || len(tags[0].Timestamps) != len(stored) || !sort.Float64sAreSorted(tags[0].Timestamps) {
+		t.Fatalf("%+v", tags)
+	}
 }

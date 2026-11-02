@@ -20,6 +20,7 @@ import (
 )
 
 var errVideoWorker = errors.New("video inference unavailable")
+var errDuplicateVideoFrame = errors.New("duplicate video frame")
 var errNoVideoFrame = errors.New("no frame at timestamp")
 
 const videoSchema = `CREATE TABLE IF NOT EXISTS video_frames(
@@ -139,38 +140,70 @@ func (a *AI) indexVideo(ctx context.Context, j aiJob, p Photo) error {
 		at            float64
 		preview, clip []byte
 	}
+	type sample struct {
+		at         float64
+		preview    []byte
+		prediction mlPrediction
+	}
+	// Extraction runs ahead of concurrent inference; results are ordered afterwards.
+	var samples []sample
+	var lastPreview []byte
+	err = runAIPipeline(ctx, a.lib.videoSamplingPlan(ctx, p, duration), a.lib.config.ML.Concurrency,
+		func(ctx context.Context, at float64) ([]byte, error) {
+			if !a.waitIndexing(ctx, true) {
+				return nil, ctx.Err()
+			}
+			preview, e := a.lib.videoFrame(ctx, p, at)
+			if e != nil {
+				return nil, e
+			}
+			// The single producer sees samples in time order.
+			if bytes.Equal(lastPreview, preview) {
+				return nil, errDuplicateVideoFrame
+			}
+			lastPreview = preview
+			return preview, nil
+		},
+		func(ctx context.Context, preview []byte) (mlPrediction, error) {
+			if !a.waitIndexing(ctx, false) {
+				return mlPrediction{}, ctx.Err()
+			}
+			a.pipeline.inFlight.Add(1)
+			defer a.pipeline.inFlight.Add(-1)
+			return a.ml.predict(ctx, preview, "")
+		},
+		func(r aiPipelineResult[float64]) error {
+			if r.inferenceError {
+				a.mu.Lock()
+				a.online = false
+				a.mu.Unlock()
+				return fmt.Errorf("%w: %v", errVideoWorker, r.err)
+			}
+			if errors.Is(r.err, errNoVideoFrame) || errors.Is(r.err, errDuplicateVideoFrame) {
+				return nil
+			}
+			if r.err != nil {
+				return r.err
+			}
+			samples = append(samples, sample{r.job, r.preview, r.prediction})
+			return nil
+		})
+	if err != nil {
+		return err
+	}
+	if len(samples) > 0 {
+		a.mu.Lock()
+		a.online = true
+		a.mu.Unlock()
+	}
+	// Face grouping keeps the first appearance, so it needs time order.
+	sort.Slice(samples, func(i, k int) bool { return samples[i].at < samples[k].at })
 	var frames []frame
 	var faces []mlFace
 	var vectors []vector
 	var sum vector
-	var lastPreview []byte
-	for _, at := range a.lib.videoSamplingPlan(ctx, p, duration) {
-		if !a.waitIndexing(ctx, true) {
-			return ctx.Err()
-		}
-		preview, e := a.lib.videoFrame(ctx, p, at)
-		if errors.Is(e, errNoVideoFrame) {
-			continue
-		}
-		if e != nil {
-			return e
-		}
-		if bytes.Equal(lastPreview, preview) {
-			continue
-		}
-		lastPreview = preview
-		a.pipeline.inFlight.Add(1)
-		prediction, e := a.ml.predict(ctx, preview, "")
-		a.pipeline.inFlight.Add(-1)
-		if e != nil {
-			a.mu.Lock()
-			a.online = false
-			a.mu.Unlock()
-			return fmt.Errorf("%w: %v", errVideoWorker, e)
-		}
-		a.mu.Lock()
-		a.online = true
-		a.mu.Unlock()
+	for _, s := range samples {
+		at, preview, prediction := s.at, s.preview, s.prediction
 		v, e := parseVector(prediction.Clip)
 		if e != nil {
 			return e
@@ -333,11 +366,13 @@ func reviewMediaSQL(r *http.Request, path string) (string, error) {
 const personMediaCountsSQL = ",count(DISTINCT CASE WHEN f.image_id IN(SELECT id FROM catalog.images i INDEXED BY image_video_status WHERE NOT (" + photoOnlySQL + ")) THEN f.image_id END)"
 
 // Scene sampling is an optional bounded pass; regular samples always span the video.
+// Keyframes only: full decodes of long 4K HEVC clips exceed the timeout on small CPUs,
+// and intra-only codecs such as MJPEG still decode every frame.
 func (l *Library) videoSamplingPlan(ctx context.Context, p Photo, duration float64) []float64 {
 	times := videoSampleTimes(duration)
 	scan, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(scan, l.config.FFmpeg, "-nostdin", "-v", "error", "-threads", "1", "-i", p.AbsolutePath, "-an", "-vf", "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=-", "-frames:v", "120", "-f", "null", "-")
+	cmd := exec.CommandContext(scan, l.config.FFmpeg, "-nostdin", "-v", "error", "-skip_frame", "nokey", "-threads", "1", "-i", p.AbsolutePath, "-an", "-vf", "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=-", "-frames:v", "120", "-f", "null", "-")
 	configurePreview(cmd)
 	var out limitedBuffer
 	out.max = 128 << 10
