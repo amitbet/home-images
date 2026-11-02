@@ -1712,6 +1712,7 @@ dialog::backdrop {
   gap:7px;padding:12px 10px 8px;border:1px solid var(--line);border-radius:12px;
   background:var(--surface);transition:border-color .15s,box-shadow .15s;
 }
+.person-editor .merge-card {cursor:pointer;}
 .person-editor .merge-card:hover {border-color:var(--line-strong);box-shadow:var(--shadow);}
 .person-editor .merge-card.selected {background:var(--accent-soft);border-color:var(--accent);outline:1px solid var(--accent);}
 .person-editor .merge-card img, #personEditor #personSuggestions .merge-card img {width:88px;height:88px;align-self:center;border-radius:10px;}

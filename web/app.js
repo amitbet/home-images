@@ -1078,6 +1078,10 @@ function mergeGroupRow(person) {
   year.title = "Years taken (from photo capture dates)";
   info.append(text("strong", image.alt), text("p", personMediaLabel(person)), year);
   row.append(image, info, mergeChoice(person));
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, label, input")) return;
+    row.querySelector('input[data-merge-group]').click();
+  });
   return row;
 }
 let mergeGeneration = 0,
