@@ -1004,7 +1004,7 @@ function renderMergeImageCount(){
  $("mergeSelectionCount").textContent=mergeSelection.size?`${mergeSelection.size} groups selected - ${count}`:"No groups selected";
  if($("mergeConfirm").open){
   $("mergeKeepName").textContent=`Keep ${state.editing.name||"Person "+state.editing.id} and add these ${mergeSelection.size} groups (${count}):`;
-  $("confirmMergeGroups").disabled=!mergeSelection.size||mergeSelectedImages===null;
+  $("confirmMergeGroups").disabled=!mergeSelection.size||mergeSelectedImages===null||$("mergeConfirm").getAttribute("aria-busy")==="true";
  }
 }
 function updateMergeImageCount(){
@@ -1279,11 +1279,20 @@ $("mergePerson").onclick = () => {
     const drop = text("button", "Not a match", "text-button dismiss-match");
     drop.type = "button";
     drop.setAttribute("aria-label", `${person.name || "Person " + person.id} is not the same person`);
-    drop.onclick = () => {
+    drop.onclick = async () => {
       if ($("mergeConfirm").getAttribute("aria-busy") === "true") return;
-      mergeSelection.delete(person.id);
-      row.remove();
-      updateMergeSelection();
+      drop.disabled = true;
+      $("mergeConfirm").setAttribute("aria-busy", "true");
+      $("confirmMergeGroups").disabled = true;
+      try {
+        if (await dismissPersonMatch(state.editing, person)) row.remove();
+      } catch (e) {
+        $("mergeConfirmError").textContent = e.message;
+      } finally {
+        drop.disabled = false;
+        $("mergeConfirm").setAttribute("aria-busy", "false");
+        renderMergeImageCount();
+      }
     };
     row.append(drop);
     $("mergeConfirmGroups").append(row);
@@ -1294,7 +1303,7 @@ $("mergePerson").onclick = () => {
 };
 $("cancelMergeConfirm").onclick = () => closeModal("mergeConfirm");
 $("confirmMergeGroups").onclick = async () => {
-  if (!mergeSelection.size || mergeSelectedImages === null) return;
+  if (!mergeSelection.size || mergeSelectedImages === null || $("mergeConfirm").getAttribute("aria-busy") === "true") return;
   const button = $("confirmMergeGroups");
   button.disabled = true;
   const originalLabel=button.textContent;
@@ -2648,6 +2657,19 @@ document.addEventListener("visibilitychange", () => {
     acquireWakeLock();
 });
 
+async function dismissPersonMatch(person, candidate) {
+  await api(`/api/people/${person.id}/dismiss`, {other: candidate.id});
+  if (state.editing.id !== person.id) return false;
+  dismissedSuggestionIds.add(candidate.id);
+  mergeSelection.delete(candidate.id);
+  suggestedGroups = suggestedGroups.filter(p => p.id !== candidate.id);
+  for (const input of document.querySelectorAll(`input[data-merge-group="${candidate.id}"]`)) {
+    input.closest(".face-suggestion").remove();
+  }
+  updateMergeSelection();
+  loadMergeUndo(person);
+  return true;
+}
 function appendSuggestionPage(count = 25) {
   const person = state.editing;
   const container = $("personSuggestions");
@@ -2666,9 +2688,8 @@ function appendSuggestionPage(count = 25) {
     dismiss.setAttribute("aria-label", `${candidate.name || "Person " + candidate.id} is not the same person`);
     dismiss.onclick=async()=>{
       dismiss.disabled=true;
-      try {await api(`/api/people/${person.id}/dismiss`,{other:candidate.id});
-        if(state.editing.id!==person.id)return;
-        dismissedSuggestionIds.add(candidate.id);mergeSelection.delete(candidate.id);suggestedGroups=suggestedGroups.filter(p=>p.id!==candidate.id);row.remove();updateMergeSelection();loadMergeUndo(person);
+      try {
+        if(await dismissPersonMatch(person,candidate))row.remove();
       }catch(e){$("editError").textContent=e.message;dismiss.disabled=false;}
     };
     row.append(dismiss);container.append(row);
