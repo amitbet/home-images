@@ -1736,6 +1736,7 @@ dialog::backdrop {
 .person-editor .merge-card .dismiss-match {align-self:center;padding:2px 6px;min-height:26px;font-size:12px;}
 #personEditor .merge-review-footer {position:sticky;bottom:-28px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 4px;background:var(--surface);border-top:1px solid var(--line);z-index:5;}
 #personEditor #moreSuggestions {margin:18px 0;}
+#personEditor #suggestionPageSize {width: 100px; max-width: 100%;}
 #personEditor #manualMergeSearch {margin-top:20px;padding-bottom:12px;}
 #personEditor #mergeResults:not(:empty) {margin-top:12px;padding:4px;}
 .merge-search-status:not([hidden]) {display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--muted);}
