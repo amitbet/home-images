@@ -2459,6 +2459,7 @@ for (const id of ["directory", "place", "tag", "dateFrom", "dateTo"])
       e.preventDefault();
     }
   });
+const VIDEO_SEEK_SECONDS = 10;
 window.addEventListener("keydown", (e) => {
   if (
     !$("viewer").open ||
@@ -2466,6 +2467,14 @@ window.addEventListener("keydown", (e) => {
     /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)
   )
     return;
+  const video = $("fullVideo");
+  if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !video.hidden && video.currentSrc) {
+    e.preventDefault();
+    const step = e.key === "ArrowRight" ? VIDEO_SEEK_SECONDS : -VIDEO_SEEK_SECONDS;
+    const end = Number.isFinite(video.duration) ? video.duration : Infinity;
+    video.currentTime = Math.min(end, Math.max(0, video.currentTime + step));
+    return;
+  }
   if (e.key === "ArrowRight") {
     e.preventDefault();
     stopPlay();
