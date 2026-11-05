@@ -3,7 +3,7 @@
   "data_dir": "/var/lib/home-images",
   "host": "127.0.0.1",
   "port": 8372,
-  "scan_interval_seconds": 900,
+  "scan_interval_seconds": 604800,
   "cors_origins": ["http://dashboard.local"],
   "ffmpeg": "ffmpeg",
   "jpeg_decoder": "auto",

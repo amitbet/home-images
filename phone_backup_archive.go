@@ -83,7 +83,6 @@ func (b *phoneBackup) importFolders(ctx context.Context) error {
 	// Copy nested slices: API mutations always replace, never edit these slices.
 	phones := append([]backupPhone(nil), b.settings.Phones...)
 	b.mu.Unlock()
-	changed := false
 	for _, phone := range phones {
 		for _, folder := range phone.Folders {
 			var status struct {
@@ -104,8 +103,7 @@ func (b *phoneBackup) importFolders(ctx context.Context) error {
 			if sequence, ok := b.importedSequences[key]; ok && sequence == status.Sequence {
 				continue
 			}
-			n, err := b.importFolder(ctx, phone, folder)
-			changed = changed || n > 0
+			_, err := b.importFolder(ctx, phone, folder)
 			if err != nil {
 				return err
 			}
@@ -114,9 +112,6 @@ func (b *phoneBackup) importFolders(ctx context.Context) error {
 			}
 			b.importedSequences[key] = status.Sequence
 		}
-	}
-	if changed {
-		b.lib.Scan(ctx)
 	}
 	return nil
 }
@@ -266,6 +261,9 @@ func (b *phoneBackup) importFolder(ctx context.Context, phone backupPhone, folde
 			}
 		}
 		archivePath := filepath.ToSlash(filepath.Join("Phone backups", destination))
+		if indexErr := b.lib.reconcileChangedPath(ctx, archivePath); indexErr != nil {
+			b.lib.scanError(fmt.Errorf("index phone backup %s: %w", archivePath, indexErr))
+		}
 		if _, err = b.lib.db.ExecContext(ctx, `INSERT INTO phone_backup_hashes(path,signature,content_id,file_hash,hash_error) VALUES(?,?,nullif(?,''),?,nullif(?,'')) ON CONFLICT(path) DO UPDATE SET signature=excluded.signature,content_id=excluded.content_id,file_hash=excluded.file_hash,hash_error=excluded.hash_error`, archivePath, fmt.Sprintf("go1:%d:%d", before.Size(), before.ModTime().UnixNano()), hashes.ContentID, hashes.FileHash, hashError); err != nil {
 			return err
 		}

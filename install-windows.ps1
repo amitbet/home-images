@@ -57,7 +57,7 @@ if ((Test-Path -LiteralPath $Destination) -and (Get-Item -LiteralPath $Destinati
 New-Item -ItemType Directory -Force $DataDirectory | Out-Null
 $configPath = Join-Path $DataDirectory 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
-    @{root=$Root; data_dir=$DataDirectory; host='0.0.0.0'; port=$Port; scan_interval_seconds=900; cors_origins=@('*'); ffmpeg='ffmpeg'; max_pixels=80000000} |
+    @{root=$Root; data_dir=$DataDirectory; host='0.0.0.0'; port=$Port; scan_interval_seconds=604800; cors_origins=@('*'); ffmpeg='ffmpeg'; max_pixels=80000000} |
         ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
 }
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json

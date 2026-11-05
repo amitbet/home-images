@@ -286,9 +286,9 @@ func (l *Library) Run(ctx context.Context) {
 	go func() { defer close(thumbnailDone); l.warmThumbnails(ctx) }()
 	defer func() { <-thumbnailDone }()
 	defer func() { <-aiDone }()
-	l.Scan(ctx)
+	l.scanIfDue(ctx)
 	l.optimizeDatabases(ctx)
-	ticker := time.NewTicker(time.Duration(l.config.ScanInterval) * time.Second)
+	ticker := time.NewTicker(l.scanInterval())
 	defer ticker.Stop()
 	optimizeTicker := time.NewTicker(24 * time.Hour)
 	defer optimizeTicker.Stop()
@@ -297,7 +297,7 @@ func (l *Library) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			l.Scan(ctx)
+			l.scanIfDue(ctx)
 		case <-optimizeTicker.C:
 			l.optimizeDatabases(ctx)
 		}
@@ -326,6 +326,38 @@ func supported(path string) bool {
 func isHEIC(path string) bool {
 	e := strings.ToLower(filepath.Ext(path))
 	return e == ".heic" || e == ".heif"
+}
+
+// scanIfDue gates every automatic full scan, including startup and watcher recovery.
+// Claim before scanning so failures and restarts cannot repeatedly walk the disk.
+func (l *Library) scanIfDue(ctx context.Context) {
+	if !l.scanRunMu.TryLock() {
+		return
+	}
+	defer l.scanRunMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	now := time.Now().Unix()
+	result, err := l.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('last_automatic_scan',?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?`, now, now-int64(l.scanInterval()/time.Second))
+	if err != nil {
+		l.scanError(fmt.Errorf("claim automatic scan: %w", err))
+		return
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		l.scanError(err)
+		return
+	}
+	if claimed == 1 {
+		l.scanLocked(ctx)
+	}
+}
+
+func (l *Library) scanInterval() time.Duration {
+	seconds := max(l.config.ScanInterval, 604800)
+	return time.Duration(seconds) * time.Second
 }
 
 func (l *Library) Scan(ctx context.Context) {

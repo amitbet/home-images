@@ -56,7 +56,7 @@ func (c *MLConfig) defaults() {
 }
 
 func loadConfig(path string) (Config, error) {
-	c := Config{Host: "127.0.0.1", Port: 8372, ScanInterval: 900, FFmpeg: "ffmpeg", MaxPixels: 80_000_000}
+	c := Config{Host: "127.0.0.1", Port: 8372, ScanInterval: 604800, FFmpeg: "ffmpeg", MaxPixels: 80_000_000}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return c, err

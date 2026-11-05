@@ -58,7 +58,7 @@ if [[ ! -f "$config" ]]; then
  python3 - "$config" "$root" "$data" "$host" "$port" <<'PY'
 import json,sys
 with open(sys.argv[1],'x') as f:
-    json.dump(dict(root=sys.argv[2],data_dir=sys.argv[3],host=sys.argv[4],port=int(sys.argv[5]),scan_interval_seconds=900,max_pixels=80000000,jpeg_decoder='auto',ffmpeg='ffmpeg',ml=dict(enabled=False)),f,indent=2)
+    json.dump(dict(root=sys.argv[2],data_dir=sys.argv[3],host=sys.argv[4],port=int(sys.argv[5]),scan_interval_seconds=604800,max_pixels=80000000,jpeg_decoder='auto',ffmpeg='ffmpeg',ml=dict(enabled=False)),f,indent=2)
 PY
 fi
 root=$(field "$config" root)

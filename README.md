@@ -157,7 +157,7 @@ Configuration:
   "data_dir": "/var/lib/home-images",
   "host": "127.0.0.1",
   "port": 8372,
-  "scan_interval_seconds": 900,
+  "scan_interval_seconds": 604800,
   "cors_origins": ["http://dashboard.local"],
   "ffmpeg": "ffmpeg",
   "max_pixels": 80000000
@@ -169,11 +169,11 @@ On Windows, use JSON paths such as `"D:\\Photos"` and `"C:\\ProgramData\\HomeIma
 decoding. HEIC metadata and primary image dimensions are extracted in Go; unusual
 containers that cannot be parsed may need `ffprobe` alongside FFmpeg as a fallback.
 
-On Windows, the server also watches the photo root recursively and updates changed files and folders. It scans at startup and every `scan_interval_seconds` (minimum 30) to reconcile missed changes; for a large library, a weekly interval (604800 seconds) avoids repeated disk activity. Other platforms currently rely on periodic scans. Watcher errors or notification overflow trigger an additional reconciliation. It serves
+On Windows, the server also watches the photo root recursively and updates changed files and folders. Automatic full scans run at most once every seven days (604800 seconds), including startup and watcher recovery. Shorter `scan_interval_seconds` values are clamped to seven days; longer intervals are respected. The last automatic scan attempt is saved in SQLite, so restarting does not bypass the limit, even if a scan fails or is interrupted. Other platforms currently rely on periodic scans. Watcher errors or notification overflow request reconciliation subject to the same limit. It serves
 results while indexing, skips unreadable/corrupt/oversized images, and logs errors.
 Failed directory traversal prevents stale-entry pruning for that scan. A missing EXIF
 block does not exclude otherwise valid images. GIF/TIFF previews use the first frame.
-Restart to rescan immediately or apply configuration changes.
+Restart to apply configuration changes; restarting respects the persisted scan limit.
 
 The SQLite index is `data_dir/index-go.sqlite3`. Changing the root resets its entries.
 
