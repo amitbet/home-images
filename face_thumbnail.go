@@ -92,13 +92,11 @@ func (l *Library) warmPeopleThumbnails(ctx context.Context) {
 	if !waitContext(ctx, 5*time.Second) {
 		return
 	}
-	for ctx.Err() == nil {
-		if err := l.warmPeoplePass(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("People thumbnail warming: %v", err)
-		}
-		if !waitContext(ctx, 10*time.Minute) {
-			return
-		}
+	if err := l.warmPeoplePass(ctx); err != nil && ctx.Err() == nil {
+		log.Printf("People thumbnail warming: %v", err)
+	}
+	if ctx.Err() == nil {
+		log.Print("People thumbnail startup pass finished; new faces are seeded by indexing")
 	}
 }
 func (l *Library) warmPeoplePass(ctx context.Context) error {
@@ -136,16 +134,14 @@ func (l *Library) warmPeoplePass(ctx context.Context) error {
 		return err
 	}
 	for _, c := range covers {
-		// Cached covers still open originals to validate signatures. Pace those
-		// checks too, and honor pause/browsing before touching the next file.
-		if !waitContext(ctx, 20*time.Millisecond) || !l.ai.waitIndexing(ctx, true) {
+		if !l.ai.waitIndexing(ctx, true) {
 			return ctx.Err()
 		}
 		p, e := l.get(ctx, c.id)
 		if e != nil {
 			continue
 		}
-		key, e := l.previewKey(p, fmt.Sprintf("face:%s:%d:%d:160", c.box, c.width, c.height))
+		key, e := l.warmingPreviewKey(ctx, p, fmt.Sprintf("face:%s:%d:%d:160", c.box, c.width, c.height))
 		if e != nil || l.thumbnails.exists(key) {
 			continue
 		}

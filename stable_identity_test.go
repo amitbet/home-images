@@ -171,7 +171,7 @@ func TestExplicitRootRelocationPreservesLibrary(t *testing.T) {
 
 func hashFixture(t *testing.T, l *Library) {
 	t.Helper()
-	if _, err := l.hashIdentityBatch(context.Background()); err != nil {
+	if _, err := l.hashIdentityBatch(context.Background(), 0); err != nil {
 		t.Fatal(err)
 	}
 }

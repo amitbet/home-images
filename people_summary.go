@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const peopleSummaryInterval = 30 * time.Second
+const peopleSummaryInterval = 5 * time.Minute
 
 type peopleSnapshot struct {
 	items    []personSummary
@@ -32,7 +32,7 @@ func (a *AI) peopleSummaries(ctx context.Context, refresh bool) (*peopleSnapshot
 	for {
 		revision := a.selectionRevision.Load()
 		a.peopleMu.Lock()
-		if cached := a.peopleSummary; !refresh && cached != nil && cached.revision == revision && time.Since(cached.created) < 2*peopleSummaryInterval {
+		if cached := a.peopleSummary; !refresh && cached != nil && cached.revision == revision && time.Since(cached.created) < peopleSummaryInterval {
 			a.peopleMu.Unlock()
 			return cached, nil
 		}
@@ -106,16 +106,15 @@ func (a *AI) cachedPeoplePage(w http.ResponseWriter, r *http.Request, limit, off
 }
 
 func (a *AI) warmPeopleSummaries(ctx context.Context) {
-	ticker := time.NewTicker(peopleSummaryInterval)
-	defer ticker.Stop()
 	for {
-		if _, err := a.peopleSummaries(ctx, true); err != nil && ctx.Err() == nil {
+		started := time.Now()
+		log.Print("Background people summaries started")
+		if _, err := a.peopleSummaries(ctx, false); err != nil && ctx.Err() == nil {
 			log.Printf("Refresh people summaries: %v", err)
 		}
-		select {
-		case <-ctx.Done():
+		log.Printf("Background people summaries finished: elapsed=%s", time.Since(started).Round(time.Millisecond))
+		if !waitContext(ctx, peopleSummaryInterval) {
 			return
-		case <-ticker.C:
 		}
 	}
 }

@@ -137,11 +137,13 @@ func (l *Library) saveIdentity(ctx context.Context, j identityJob, h originalHas
 }
 
 func (l *Library) backfillImageIdentities(ctx context.Context) {
-	if !waitContext(ctx, 5*time.Second) {
+	if !waitContext(ctx, time.Minute) {
 		return
 	}
 	for ctx.Err() == nil {
-		n, err := l.hashIdentityBatch(ctx)
+		started := time.Now()
+		n, err := l.hashIdentityBatch(ctx, 2*time.Second)
+		log.Printf("Background identity batch: files=%d elapsed=%s error=%v", n, time.Since(started).Round(time.Millisecond), err)
 		if err != nil && ctx.Err() == nil {
 			log.Printf("Image identity backfill: %v", err)
 		}
@@ -154,7 +156,7 @@ func (l *Library) backfillImageIdentities(ctx context.Context) {
 		}
 	}
 }
-func (l *Library) hashIdentityBatch(ctx context.Context) (int, error) {
+func (l *Library) hashIdentityBatch(ctx context.Context, filePause time.Duration) (int, error) {
 	rows, err := l.db.QueryContext(ctx, `SELECT id,path,signature FROM images WHERE hash_signature IS NULL AND hash_retry_at<=? ORDER BY id LIMIT 16`, time.Now().Unix())
 	if err != nil {
 		return 0, err
@@ -190,7 +192,9 @@ func (l *Library) hashIdentityBatch(ctx context.Context) (int, error) {
 				return 0, e
 			}
 		}
-		if !waitContext(ctx, 100*time.Millisecond) {
+		// Opening originals also triggers real-time antivirus work. Leave a
+		// quiet interval between files, in addition to throttling large reads.
+		if !waitContext(ctx, filePause) {
 			return 0, ctx.Err()
 		}
 	}

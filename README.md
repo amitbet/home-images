@@ -710,8 +710,15 @@ Photos without GPS or a settlement within 50 km receive an empty result.
 People portraits use the isolated preview worker to crop oriented pixels and
 encode the final 160?160 JPEG directly. JPEG originals use TurboJPEG when
 available. New ML results seed face portraits from the existing inference preview;
-a single background worker also warms existing group covers, largest groups
-first, sharing the background decoder and yielding to foreground rendering.
+photo gallery thumbnails are generated on demand. Existing people covers and
+video thumbnails get one startup pass, then stop. New or changed videos are
+queued by catalog updates, including filesystem notifications; there is no
+periodic thumbnail walk. Cached video thumbnails are kept outside the bounded
+photo cache and reused. New ML results seed face portraits directly.
+Video previews prefer an embedded cover and otherwise decode the first frame
+with FFmpeg, on demand within the shared render limit. Results are cached;
+missing FFmpeg, corrupt files or an eight-second extraction timeout fall back
+to the play-button placeholder. Originals are never modified.
 Cached portraits retain source-signature invalidation and visibility checks.
 
 The image viewer chooses cached 1280px, 1920px or 2560px square bounding boxes
@@ -736,7 +743,7 @@ grouped with similarity ranking preserved within each group. Responses report
 Group direction changes group order while photo order remains most similar first.
 Grouped pagination covers every membership, including offsets above 1,000.
 `GET /api/people?summary=true` serves the unfiltered People overview from an
-in-memory summary warmed at startup and refreshed every 30 seconds. It retains
+in-memory summary warmed at startup and refreshed every five minutes. It retains
 exact distinct-photo counts and capture years for the snapshot, and returns
 `summary_age_ms`. API mutations invalidate it immediately; `refresh=1` forces a
 rebuild. Name searches, curation filters, and requests without `summary=true`

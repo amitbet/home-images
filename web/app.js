@@ -131,6 +131,9 @@ const thumbnailObserver = typeof IntersectionObserver === "function"
     }, { rootMargin: "150px" })
   : null;
 function previewImage(img, url) {
+	// Separate new video frames from cached generic placeholders, including
+	// entries that are still fresh in the browser's HTTP cache.
+	url += (url.includes("?") ? "&" : "?") + "preview=video-v2";
   img.dataset.preview = url;
   if (thumbnailObserver) thumbnailObserver.observe(img);
   else queueMicrotask(() => requestThumbnail(img));

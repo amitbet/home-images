@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,12 @@ import (
 // a soft memory budget, a timeout, and below-normal priority on Windows. It never
 // opens either SQLite index and cannot consume the foreground render slots.
 func (l *Library) aiPreview(ctx context.Context, p Photo) ([]byte, error) {
+	started := time.Now()
+	defer func() {
+		if elapsed := time.Since(started); elapsed >= 5*time.Second && ctx.Err() == nil {
+			log.Printf("Background preview slow: id=%s type=%s elapsed=%s", p.ID, strings.ToLower(filepath.Ext(p.Path)), elapsed.Round(time.Millisecond))
+		}
+	}()
 	if l.previewDecoder != nil {
 		select {
 		case l.previewDecoder <- struct{}{}:
@@ -36,6 +43,9 @@ func (l *Library) aiPreview(ctx context.Context, p Photo) ([]byte, error) {
 		if current, e := l.previewKey(p, "image:1280:1280:80"); l.thumbnails != nil && e == nil && current == viewerKey {
 			_ = l.thumbnails.store(viewerKey, data)
 		}
+	}
+	if err != nil && ctx.Err() == nil {
+		log.Printf("Background preview failed: id=%s type=%s: %v", p.ID, strings.ToLower(filepath.Ext(p.Path)), err)
 	}
 	return data, err
 }

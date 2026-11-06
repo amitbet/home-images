@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,9 @@ type scanStatus struct {
 	Errors   int     `json:"errors"`
 }
 type Library struct {
+	thumbnailMu      sync.Mutex
+	thumbnailPending map[string]Photo
+	thumbnailWake    chan struct{}
 	overlapMu        sync.Mutex
 	overlapCache     *cachedDirectoryOverlaps
 	duplicateJobMu   sync.Mutex
@@ -143,6 +147,10 @@ CREATE TABLE IF NOT EXISTS locations(image_id TEXT PRIMARY KEY,signature TEXT NO
 	}
 	if previous != "" && previous != rootPath && c.RelocateFrom == previous {
 		if err = l.verifyRootRelocation(context.Background()); err != nil {
+			l.Close()
+			return nil, err
+		}
+		if _, err = db.Exec("DELETE FROM settings WHERE key='scan_started'"); err != nil {
 			l.Close()
 			return nil, err
 		}
@@ -265,6 +273,26 @@ func (l *Library) directory(relative string) (string, error) {
 	return filepath.ToSlash(name), nil
 }
 func (l *Library) Run(ctx context.Context) {
+	request := filepath.Join(l.config.DataDir, "cpu-profile.request")
+	if err := os.Remove(request); err == nil {
+		go func() {
+			path := filepath.Join(l.config.DataDir, "cpu-profile.pprof")
+			f, err := os.Create(path)
+			if err != nil {
+				log.Printf("CPU profile: %v", err)
+				return
+			}
+			defer f.Close()
+			if err = pprof.StartCPUProfile(f); err != nil {
+				log.Printf("CPU profile: %v", err)
+				return
+			}
+			log.Print("CPU profile started (30 seconds)")
+			waitContext(ctx, 30*time.Second)
+			pprof.StopCPUProfile()
+			log.Printf("CPU profile saved: %s", path)
+		}()
+	}
 	watchDone := make(chan struct{})
 	go func() { defer close(watchDone); l.watchChanges(ctx) }()
 	defer func() { <-watchDone }()
@@ -274,22 +302,23 @@ func (l *Library) Run(ctx context.Context) {
 	summariesDone := make(chan struct{})
 	go func() { defer close(summariesDone); l.ai.warmPeopleSummaries(ctx) }()
 	defer func() { <-summariesDone }()
-	peopleDone := make(chan struct{})
-	go func() { defer close(peopleDone); l.warmPeopleThumbnails(ctx) }()
-	defer func() { <-peopleDone }()
 	geoDone := make(chan struct{})
 	go func() { defer close(geoDone); l.geocode(ctx) }()
 	defer func() { <-geoDone }()
 	aiDone := make(chan struct{})
 	go func() { defer close(aiDone); l.ai.Run(ctx) }()
 	thumbnailDone := make(chan struct{})
-	go func() { defer close(thumbnailDone); l.warmThumbnails(ctx) }()
+	go func() { defer close(thumbnailDone); l.runThumbnailWarming(ctx) }()
 	defer func() { <-thumbnailDone }()
+	peopleDone := make(chan struct{})
+	go func() { defer close(peopleDone); l.warmPeopleThumbnails(ctx) }()
+	defer func() { <-peopleDone }()
 	defer func() { <-aiDone }()
 	l.scanIfDue(ctx)
 	l.optimizeDatabases(ctx)
 	ticker := time.NewTicker(l.scanInterval())
 	defer ticker.Stop()
+
 	optimizeTicker := time.NewTicker(24 * time.Hour)
 	defer optimizeTicker.Stop()
 	for {
@@ -369,6 +398,8 @@ func (l *Library) Scan(ctx context.Context) {
 }
 
 func (l *Library) scanLocked(ctx context.Context) {
+	started := time.Now()
+	log.Print("Scan started")
 	l.mu.Lock()
 	l.status.Scanning = true
 	l.status.Errors = 0
@@ -478,7 +509,7 @@ func (l *Library) scanLocked(ctx context.Context) {
 		l.status.LastScan = &now
 		l.mu.Unlock()
 	}
-	log.Printf("Scan finished: complete=%t errors=%d", complete, l.Status().Errors)
+	log.Printf("Scan finished: complete=%t errors=%d files=%d elapsed=%s", complete, l.Status().Errors, len(seen), time.Since(started).Round(time.Millisecond))
 }
 func imageID(path string) string { s := sha256.Sum256([]byte(path)); return hex.EncodeToString(s[:12]) }
 func (l *Library) get(ctx context.Context, id string) (Photo, error) {

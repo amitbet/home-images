@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"image/jpeg"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -53,16 +52,20 @@ func (l *Library) previewKey(p Photo, variant string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return l.previewKeyForFile(p, variant, info.Size(), info.ModTime().UnixNano()), nil
+}
+
+func (l *Library) previewKeyForFile(p Photo, variant string, size, modified int64) string {
 	if isVideo(p.Path) {
 		_, err := exec.LookPath(l.config.FFmpeg)
 		variant += fmt.Sprintf(":video-frame-v1:ffmpeg=%t", err == nil)
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "v1|%s|%s|%d|%d|%s", l.rootPath, p.Path, info.ModTime().UnixNano(), info.Size(), variant))
+	sum := sha256.Sum256(fmt.Appendf(nil, "v1|%s|%s|%d|%d|%s", l.rootPath, p.Path, modified, size, variant))
 	key := hex.EncodeToString(sum[:])
 	if isVideo(p.Path) && strings.HasPrefix(variant, fmt.Sprintf("image:%d:%d:%d:video-frame-v1:", thumbnailWidth, thumbnailHeight, thumbnailQuality)) {
 		key = "video-" + key
 	}
-	return key, nil
+	return key
 }
 func (c *thumbnailCache) path(key string) string {
 	if strings.HasPrefix(key, "video-") {
@@ -268,84 +271,6 @@ func (l *Library) seedThumbnail(p Photo, preview []byte, key string) {
 		err = jpeg.Encode(&out, img, &jpeg.Options{Quality: thumbnailQuality})
 		return out.Bytes(), err
 	})
-}
-
-func (l *Library) warmThumbnails(ctx context.Context) {
-	if !waitContext(ctx, 5*time.Second) {
-		return
-	}
-	l.thumbnails.prune(thumbnailBudget)
-	cursor := ""
-	completed := 0
-	for ctx.Err() == nil {
-		rows, err := l.db.QueryContext(ctx, "SELECT path,metadata_json(metadata) FROM images WHERE path>? COLLATE BINARY ORDER BY path COLLATE BINARY LIMIT 24", cursor)
-		if err != nil {
-			if !waitContext(ctx, 30*time.Second) {
-				return
-			}
-			continue
-		}
-		var photos []Photo
-		for rows.Next() {
-			var path, raw string
-			if err = rows.Scan(&path, &raw); err != nil {
-				break
-			}
-			var p Photo
-			if json.Unmarshal([]byte(raw), &p) == nil {
-				photos = append(photos, p)
-			}
-		}
-		rows.Close()
-		if len(photos) == 0 {
-			cursor = ""
-			if !waitContext(ctx, 10*time.Minute) {
-				return
-			}
-			continue
-		}
-		for _, p := range photos {
-			cursor = p.Path
-			if ctx.Err() != nil {
-				return
-			}
-			if !isVideo(p.Path) {
-				continue
-			}
-			key, err := l.previewKey(p, fmt.Sprintf("image:%d:%d:%d", thumbnailWidth, thumbnailHeight, thumbnailQuality))
-			if err != nil {
-				continue
-			}
-			if l.thumbnails.exists(key) {
-				continue
-			}
-			// Foreground browsing always takes priority over speculative warming.
-			for l.ai.paused.Load() || l.renderSlots.active() > 0 || time.Since(time.Unix(0, l.lastRender.Load())) < 2*time.Second {
-				if !waitContext(ctx, time.Second) {
-					return
-				}
-			}
-			_, err = l.thumbnails.get(ctx, key, func(ctx context.Context) ([]byte, error) {
-				select {
-				case l.previewDecoder <- struct{}{}:
-					defer func() { <-l.previewDecoder }()
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-				return l.processPreview(ctx, p, thumbnailWidth, thumbnailHeight, thumbnailQuality)
-			})
-			if err != nil && ctx.Err() == nil {
-				log.Printf("Thumbnail %s: %v", p.ID, err)
-			}
-			completed++
-			if completed%200 == 0 {
-				l.thumbnails.prune(thumbnailBudget)
-			}
-			if !waitContext(ctx, 2*time.Second) {
-				return
-			}
-		}
-	}
 }
 
 // The cache is disposable. Only generated hash-named JPEGs inside its own

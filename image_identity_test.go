@@ -45,10 +45,10 @@ func TestIdentityBackfillPreservesIndexAndLinksDuplicates(t *testing.T) {
 	if err := l.db.QueryRow(`SELECT metadata FROM images WHERE id=?`, j.ID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := l.hashIdentityBatch(ctx); err != nil || n != 5 {
+	if n, err := l.hashIdentityBatch(ctx, 0); err != nil || n != 5 {
 		t.Fatalf("backfill %d %v", n, err)
 	}
-	if n, err := l.hashIdentityBatch(ctx); err != nil || n != 0 {
+	if n, err := l.hashIdentityBatch(ctx, 0); err != nil || n != 0 {
 		t.Fatalf("not resumable %d %v", n, err)
 	}
 	var after []byte
@@ -100,7 +100,7 @@ func TestIdentityBackfillPreservesIndexAndLinksDuplicates(t *testing.T) {
 	}
 	// No hashes are cleared on an unchanged scan, and no old IDs are replaced.
 	l.Scan(ctx)
-	if n, err := l.hashIdentityBatch(ctx); err != nil || n != 0 {
+	if n, err := l.hashIdentityBatch(ctx, 0); err != nil || n != 0 {
 		t.Fatal("unchanged scan rehashed", n, err)
 	}
 	if _, err = l.db.Exec(`UPDATE images SET signature='changed' WHERE id=?`, j.ID); err != nil {
@@ -139,7 +139,7 @@ func TestPhoneImportStreamsHashesAndRetainsMetadataVersions(t *testing.T) {
 		t.Fatalf("archive hashes %d %d %d %v", count, contents, files, err)
 	}
 	l.Scan(ctx)
-	if _, err = l.hashIdentityBatch(ctx); err != nil {
+	if _, err = l.hashIdentityBatch(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err = l.db.QueryRow(`SELECT count(*) FROM images WHERE path LIKE 'Phone backups/%' AND hash_signature=signature AND content_id IS NOT NULL`).Scan(&count); err != nil || count != 2 {
@@ -160,7 +160,7 @@ func TestIdentityBackfillRetriesFailuresWithoutStarvingOtherFiles(t *testing.T) 
 	if err := os.Remove(filepath.Join(root, "a.jpg")); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := l.hashIdentityBatch(context.Background()); err != nil || n != 5 {
+	if n, err := l.hashIdentityBatch(context.Background(), 0); err != nil || n != 5 {
 		t.Fatal(n, err)
 	}
 	var remaining, retries int
@@ -173,7 +173,7 @@ func TestIdentityBackfillRetriesFailuresWithoutStarvingOtherFiles(t *testing.T) 
 	if remaining != 1 || retries != 1 {
 		t.Fatal("failure blocked backfill", remaining, retries)
 	}
-	if n, err := l.hashIdentityBatch(context.Background()); err != nil || n != 0 {
+	if n, err := l.hashIdentityBatch(context.Background(), 0); err != nil || n != 0 {
 		t.Fatal("retry delay ignored", n, err)
 	}
 }
@@ -191,7 +191,7 @@ func TestIdentityProgressSurvivesRestartAndRejectsStaleResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if n, e := reopened.hashIdentityBatch(ctx); e != nil || n != 4 {
+	if n, e := reopened.hashIdentityBatch(ctx, 0); e != nil || n != 4 {
 		t.Fatalf("restart repeated completed work: %d %v", n, e)
 	}
 	// A result computed from an old version must not attach to a replacement.

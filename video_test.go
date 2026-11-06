@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"image/jpeg"
 	"io"
 	"net/http"
@@ -71,6 +73,21 @@ func TestVideoBrowsingAndFrameIsolation(t *testing.T) {
 	thumb.Body.Close()
 	if thumb.StatusCode != 200 {
 		t.Fatalf("thumbnail: %d", thumb.StatusCode)
+	}
+	info, err := os.Stat(filepath.Join(root, "0.MP4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := sha256.Sum256(fmt.Appendf(nil, "%s:%d:%d:%d:%d:%d", p.ID, info.ModTime().UnixNano(), info.Size(), thumbnailWidth, thumbnailHeight, thumbnailQuality))
+	revalidate, _ := http.NewRequest("GET", s.URL+"/api/images/"+p.ID+"/thumbnail", nil)
+	revalidate.Header.Set("If-None-Match", fmt.Sprintf(`"%x"`, old))
+	updated, err := s.Client().Do(revalidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated.Body.Close()
+	if updated.StatusCode != 200 || updated.Header.Get("ETag") == fmt.Sprintf(`"%x"`, old) {
+		t.Fatal("old placeholder ETag was retained")
 	}
 	if got := nextPhoto(t, s, "mode=sequential"); got.Format == "VIDEO" {
 		t.Fatal("video returned to picture frame")

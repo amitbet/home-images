@@ -146,6 +146,7 @@ func (l *Library) storePhoto(ctx context.Context, photo Photo, signature string)
 	if err = tx.Commit(); err != nil {
 		return err
 	}
+	l.queueVideoThumbnail(photo)
 	if hashes.FileHash != "" {
 		return l.saveIdentity(ctx, identityJob{photo.ID, photo.Path, signature}, hashes, "")
 	}
