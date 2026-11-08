@@ -164,7 +164,11 @@ async function api(path, body, signal) {
         },
   );
   const data = await response.json();
-  if (!response.ok) throw Error(data.detail || "Request failed");
+  if (!response.ok) {
+    const error = Error(data.detail || "Request failed");
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function notice(message, error = false) {
@@ -342,17 +346,23 @@ function viewChrome() {
     $("sortDirection").title = "Group order; photos stay ranked by visual similarity";
   }
   $("gallery").classList.toggle("list-view", state.layout === "list" && !$("photoGroup").value);
-  $("listToggle").textContent = state.layout === "list" ? "Grid view" : "List view";
+  const listView = state.layout === "list";
+  const layoutLabel = listView ? "Switch to grid view" : "Switch to list view";
+  $("listToggle").setAttribute("aria-label", layoutLabel);
+  $("listToggle").title = layoutLabel;
+  $("listToggle").innerHTML = listView
+    ? '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/></svg>';
+  $("photoViewActions").hidden = !photoViews();
   $("listToggle").hidden = !!$("photoGroup").value;
   $("toggleGridFaces").hidden = !!$("photoGroup").value;
   $("listToggle").setAttribute("aria-pressed", String(state.layout === "list"));
   $("slideshow").hidden = !photoViews() || !!$("photoGroup").value;
   $("filtersToggle").hidden = !photoViews();
   $("newAlbum").hidden = state.view !== "albums";
-  if ($("playbackLinks")) $("playbackLinks").hidden = !photoViews();
   if (!photoViews()) {
-    $("filters").hidden = true;
-    $("filtersToggle").setAttribute("aria-expanded", "false");
+    closeModal("filters");
+    closeModal("faceFilterDialog");
   }
   $("folderList").hidden = true;
   $("gallery").hidden = !photoViews();
@@ -410,6 +420,8 @@ function personChip() {
 function setView(view) {
   stopPlay();
   resetInputs();
+  state.navigation = [];
+  $("photoGroup").value = "";
   state.view = view;
   state.offset = 0;
   state.selected.clear();
@@ -483,7 +495,16 @@ async function gridPage(p, signal) {
   const key = p.toString();
   const cached = gridPages.get(key);
   if (cached && Date.now() - cached.created < 30000) return cached.result;
-  const result = await api("/api/search?" + p, undefined, signal);
+  let result;
+  try {
+    result = await api("/api/search?" + p, undefined, signal);
+  } catch (error) {
+    if (error.status !== 503 || p.get("mode") !== "semantic" || !p.get("q") || signal?.aborted) throw error;
+    const fallback = new URLSearchParams(p);
+    fallback.set("mode", "metadata");
+    result = await api("/api/search?" + fallback, undefined, signal);
+    result.metadata_fallback = true;
+  }
   gridPages.delete(key);
   gridPages.set(key, {result, created: Date.now()});
   while (gridPages.size > 12) gridPages.delete(gridPages.keys().next().value);
@@ -493,6 +514,23 @@ async function gridPage(p, signal) {
 function filterChips() {
   const box = $("activeFilters");
   box.replaceChildren();
+  const faceChips = $("quickFaceChips");
+  faceChips.replaceChildren();
+  const selectedPeople = [...(state.person ? [state.person] : []), ...state.peopleFilters];
+  for (const person of selectedPeople) {
+    const button = text("button", (person.name || "Person " + person.id) + " ×", "filter-chip");
+    button.onclick = () => {
+      if (state.person?.id === person.id) state.person = null;
+      state.peopleFilters = state.peopleFilters.filter(p => p.id !== person.id);
+      state.offset = 0;
+      state.savedName = "";
+      load();
+    };
+    faceChips.append(button);
+  }
+  const active = photoViews() && (!!state.person || !!state.album || state.peopleFilters.length > 0 || Object.values(fields).some(id => $(id).value));
+  $("filtersToggle").classList.toggle("has-filters", active);
+  $("filtersToggle").title = active ? "Filters active" : "Photo filters";
   if (!photoViews()) return;
   const chips = [];
   if (state.album)
@@ -596,6 +634,12 @@ async function load(forcePeopleRefresh = false) {
       p.set("offset", state.offset);
       const result = await gridPage(p, signal);
       if (gen !== state.generation) return;
+      if (result.metadata_fallback) {
+        $("mode").value = "metadata";
+        viewChrome();
+        syncURL(true);
+        notice("Content search is unavailable. Showing Files & metadata matches with your selected filters.");
+      }
       state.bag = [];
       state.shuffleStarted = false;
       if(result.directory_groups || result.photo_groups){state.items=[...result.items];state.total=result.total;state.semantic=false;state.grouped=false;renderPhotoGroupFolders(result);$("resultsCount").textContent=number(result.total)+(result.group_by === "directory" || result.directory_groups ? " directories" : " groups");if(!result.items.length)empty("No groups found", "Try changing your filters.");pagination();return true;}
@@ -637,6 +681,7 @@ async function load(forcePeopleRefresh = false) {
     return true;
   } catch (error) {
     if (gen === state.generation) {
+      $("resultsCount").textContent = "Search unavailable";
       notice(error.message, true);
       state.items = [];
       state.total = 0;
@@ -1961,9 +2006,9 @@ if (typeof ResizeObserver === "function")
   new ResizeObserver(placeFaceLayer).observe($("fullImage"));
 function syncFaceToggles() {
   for(const id of ["toggleFaces","toggleGridFaces"]){
-    if (id === "toggleGridFaces") $(id).textContent=state.showFaces?"Face tags on":"Face tags off";
     $(id).setAttribute("aria-pressed",String(state.showFaces));
     $(id).setAttribute("aria-label",state.showFaces?"Hide face tags":"Show face tags");
+    $(id).title = state.showFaces ? "Hide face tags" : "Show face tags";
   }
   $("imagePeople").hidden=!state.showFaces;
 }
@@ -2352,13 +2397,13 @@ $("clearSelection").onclick = () => {
   renderPhotos();
   selectionBar();
 };
-$("filtersToggle").onclick = () => {
-  $("filters").hidden = !$("filters").hidden;
-  $("filtersToggle").setAttribute(
-    "aria-expanded",
-    String(!$("filters").hidden),
-  );
-};
+$("filtersToggle").onclick = () => modal("filters");
+$("closeFilters").onclick = () => closeModal("filters");
+$("quickFaceFilter").onclick = () => { modal("faceFilterDialog"); $("personFilter").focus(); };
+$("closeFaceFilter").onclick = () => closeModal("faceFilterDialog");
+$("personFilter").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("addPersonFilter").click(); }
+});
 
 let personFilterMatches = [], personFilterTimer;
 $("personFilter").addEventListener("input", () => {
@@ -2381,11 +2426,12 @@ $("addPersonFilter").onclick = async () => {
     if (matches.length !== 1) { toast(matches.length ? "Choose a unique person name" : "Choose a person from the suggestions"); return; }
     const person = matches[0];
     if (!state.peopleFilters.some(p => p.id === person.id)) state.peopleFilters.push(person);
-    $("personFilter").value = ""; state.offset = 0; load();
+    $("personFilter").value = ""; state.offset = 0; load(); $("personFilter").focus();
   } catch (e) { toast(e.message); }
 };
 
 $("applyFilters").onclick = () => {
+  closeModal("filters");
   state.offset = 0;
   state.savedName = "";
   load();
@@ -2393,7 +2439,9 @@ $("applyFilters").onclick = () => {
 $("resetFilters").onclick = () => {
   for (const id of Object.values(fields)) $(id).value = "";
   state.album = null;
+  state.person = null;
   state.peopleFilters = [];
+  closeModal("filters");
   state.offset = 0;
   state.savedName = "";
   load();
@@ -2445,8 +2493,6 @@ $("browseFolders").onclick = async () => {
       b.onclick = () => {
         $("directory").value = option.value;
         $("folderList").hidden = true;
-        state.offset = 0;
-        load();
       };
       $("folderList").append(b);
     }
@@ -2535,10 +2581,6 @@ window.addEventListener("keydown", (e) => {
   }
 })();
 let playbackLinkQuery = null;
-const playbackLinkButton = text("button", "Frame & API links", "secondary");
-playbackLinkButton.id = "playbackLinks";
-$("refresh").before(playbackLinkButton);
-playbackLinkButton.onclick = () => showPlaybackLinks();
 function showPlaybackLinks(saved = null) {
   if (!photoViews() && !saved) return;
   playbackLinkQuery = saved

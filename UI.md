@@ -101,8 +101,8 @@ and annotation export links.
 
 ## Playback for the Echo or another client
 
-Choose an album or search, then use **Frame & API links** to copy the selection's API
-or browser slideshow URL. Saved selections also have a playback-link button. Open the
+Use the slideshow icon to play the current album or search. Save a selection and use
+its playback-link button to copy an API or browser slideshow URL. Open the
 UI using the server's LAN hostname/IP when copying links for another device.
 
 The API returns the same photo fields as the existing whole-library API, including `id`,

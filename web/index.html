@@ -126,18 +126,15 @@
               <option value="size">File size</option>
             </select>
             <select id="sortDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc" selected>Descending</option></select>
-            <button id="toggleGridFaces" class="secondary" aria-pressed="true">Face tags on</button>
-            <button id="listToggle" class="secondary" aria-pressed="false">List view</button>
+            <button id="filtersToggle" class="secondary" aria-haspopup="dialog" aria-controls="filters">Filters<span class="filter-indicator" aria-hidden="true"></span></button>
+            <button id="quickFaceFilter" class="secondary" aria-haspopup="dialog" aria-controls="faceFilterDialog">+ Face tag</button>
+          </span>
+          <span id="photoViewActions" class="toolbar-actions" role="group" aria-label="Photo display">
+            <button id="toggleGridFaces" class="icon-button" aria-pressed="true" title="Toggle face tags" aria-label="Hide face tags"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M6 19c0-3 2.7-5 6-5s6 2 6 5M3 8V4h4M17 4h4v4M3 16v4h4M17 20h4v-4"/></svg></button>
+            <button id="listToggle" class="icon-button" aria-pressed="false" aria-label="Switch to list view" title="Switch to list view"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/></svg></button>
+            <button id="slideshow" class="icon-button" aria-label="Start slideshow" title="Start slideshow"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="m10 7 5 3-5 3ZM12 17v4M8 21h8"/></svg></button>
           </span>
           <button id="newAlbum" class="secondary" hidden>+ New album</button
-          ><button
-            id="filtersToggle"
-            class="secondary"
-            aria-expanded="false"
-            aria-controls="filters"
-          >
-            Filters</button
-          ><button id="slideshow" class="secondary">▷ Slideshow</button
           ><button
             id="refresh"
             class="icon-button"
@@ -147,7 +144,8 @@
           </button>
         </div>
       </section>
-      <section id="filters" class="filters" hidden aria-label="Photo filters">
+      <dialog id="filters" class="filters" aria-labelledby="filtersTitle">
+        <div class="filter-heading"><h2 id="filtersTitle">Photo filters</h2><button id="closeFilters" class="icon-button" aria-label="Close filters">×</button></div>
         <div class="filter-field folder-field">
           <label for="directory">Folder</label>
           <div class="input-row">
@@ -179,13 +177,18 @@
           <label for="tag">Tag</label
           ><input id="tag" placeholder="e.g. holiday" list="tagSuggestions" autocomplete="off" /><datalist id="tagSuggestions"></datalist>
         </div>
-        <div class="filter-field"><label for="personFilter">People (all selected)</label><div class="input-row"><input id="personFilter" list="personFilterSuggestions" placeholder="Person name" autocomplete="off"><datalist id="personFilterSuggestions"></datalist><button id="addPersonFilter" type="button" class="secondary">Add</button></div></div>
+        <div id="folderList" class="folder-list" hidden></div>
         <div class="filter-actions">
           <button id="applyFilters" class="primary">Apply filters</button
           ><button id="resetFilters" class="text-button">Reset</button>
         </div>
-      </section>
-      <div id="folderList" class="folder-list" hidden></div>
+      </dialog>
+      <dialog id="faceFilterDialog" class="person-editor" aria-labelledby="faceFilterTitle">
+        <h2 id="faceFilterTitle">Add face tag</h2><p>Photos must include every selected person. Add more tags to narrow the results.</p>
+        <div id="quickFaceChips" class="active-filters" aria-label="Selected people" aria-live="polite"></div>
+        <div class="filter-field"><label for="personFilter">People (all selected)</label><div class="input-row"><input id="personFilter" list="personFilterSuggestions" placeholder="Person name" autocomplete="off"><datalist id="personFilterSuggestions"></datalist><button id="addPersonFilter" type="button" class="secondary">Add</button></div></div>
+        <div class="dialog-actions"><button id="closeFaceFilter" class="secondary">Done</button></div>
+      </dialog>
       <div id="activeFilters" class="active-filters"></div>
       <section
         id="selectionBar"
