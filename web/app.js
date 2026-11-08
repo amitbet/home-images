@@ -79,13 +79,28 @@ function cacheThumbnail(url, blob) {
   }
   return entry;
 }
-function requestThumbnail(img) {
+function requestThumbnail(img, defer = false) {
   thumbnailQueue.push({ img, url: img.dataset.preview, generation: state.generation });
-  pumpThumbnails();
+  if (!defer) pumpThumbnails();
 }
 function pumpThumbnails() {
   if ($("viewer").open) return;
+  // Recalculate at dispatch time: scrolling may have changed which jobs matter.
+  thumbnailQueue = thumbnailQueue.filter(job => {
+    if (!job.img.isConnected || job.generation !== state.generation) return false;
+    const rect = job.img.getBoundingClientRect();
+    job.visible = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
+    job.distance = Math.max(0, -rect.bottom, rect.top - innerHeight, -rect.right, rect.left - innerWidth);
+    if (job.distance > 150 && thumbnailObserver) {
+      thumbnailObserver.observe(job.img);
+      return false;
+    }
+    return true;
+  });
+  thumbnailQueue.sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance);
   while (thumbnailActive < 4 && thumbnailQueue.length) {
+    // Keep slots free for visible images arriving during an offscreen prefetch.
+    if (!thumbnailQueue[0].visible && thumbnailActive >= 1) return;
     const job = thumbnailQueue.shift();
     if (!job.img.isConnected || job.generation !== state.generation) continue;
     const cached = clientThumbnails.get(job.url);
@@ -99,7 +114,7 @@ function pumpThumbnails() {
     thumbnailRequests.add(controller);
     thumbnailActive++;
     const timeout = setTimeout(() => controller.abort(), 30000);
-    fetch(job.url, { signal: controller.signal, cache: "default" })
+    fetch(job.url, { signal: controller.signal, cache: "default", priority: job.visible ? "high" : "low" })
       .then(response => {
         if (!response.ok) throw Error("Thumbnail " + response.status);
         return response.blob();
@@ -125,9 +140,10 @@ function pumpThumbnails() {
 const thumbnailObserver = typeof IntersectionObserver === "function"
   ? new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.isIntersecting) {
-        requestThumbnail(entry.target);
+        requestThumbnail(entry.target, true);
         thumbnailObserver.unobserve(entry.target);
       }
+      pumpThumbnails();
     }, { rootMargin: "150px" })
   : null;
 function previewImage(img, url) {
