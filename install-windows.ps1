@@ -30,7 +30,7 @@ function Wait-ProgramFiles([string]$Directory) {
     # Service status can change before its last preview child releases the files.
     for ($attempt=0; $attempt -lt 50; $attempt++) {
         $ready = $true
-        foreach ($name in @('home-images.exe','turbojpeg.dll')) {
+        foreach ($name in @('home-images.exe','turbojpeg.dll','local-text\onnxruntime.dll')) {
             $path = Join-Path $Directory $name
             if (Test-Path -LiteralPath $path) {
                 try { $handle = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None); $handle.Dispose() }
@@ -98,6 +98,8 @@ try {
         $noticePath = Join-Path $sourceDirectory $notice
         if (Test-Path -LiteralPath $noticePath) { Copy-Item -LiteralPath $noticePath -Destination $Destination }
     }
+    $textAssets = Join-Path $sourceDirectory 'local-text'
+    if (Test-Path -LiteralPath $textAssets -PathType Container) { Copy-Item -LiteralPath $textAssets -Destination $Destination -Recurse }
     $dependencyLicenses = Join-Path $sourceDirectory 'third-party-licenses'
     if (Test-Path -LiteralPath $dependencyLicenses) { Copy-Item -LiteralPath $dependencyLicenses -Destination $Destination -Recurse }
     $codec = Join-Path (Split-Path -Parent $BinaryPath) 'turbojpeg.dll'

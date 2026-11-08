@@ -862,3 +862,29 @@ matches across both media. People cards separate photo and video counts.
 The legacy API photo_count field remains the total asset count, with video_count
 providing the video subset. Indexing status reports separate video_total,
 video_indexed, video_pending and video_failed fields alongside the photo counts.
+
+### Local content-search text encoder
+
+Content search uses a local CPU encoder by default (`ml.text_encoder: "local"`).
+Release bundles and `scripts/deploy-windows.ps1` include the pinned ONNX Runtime,
+`ViT-B-32__openai` text model, and tokenizer in `local-text` beside the executable.
+Search needs no Python, Docker, Mac worker, or network access after installation.
+The remote worker remains responsible for indexing image/video embeddings and faces.
+Existing indexed photo embeddings are reused; no reindexing is needed.
+
+For a source build, package these assets before installing:
+
+```powershell
+./scripts/package-local-text.ps1 -OS windows -Architecture amd64 -OutputDirectory dist/package
+```
+
+The script also supports `linux` and `darwin`, with `amd64` or `arm64`. Downloads
+are pinned and SHA-256 checked. `ml.text_model_directory` can override the assets
+location with an absolute path. The session loads on the first uncached query and
+stays loaded; it uses up to four CPU threads with idle spinning disabled. Allow
+roughly 350–500 MiB of memory for the encoder. Query embeddings are cached in memory.
+
+A missing/broken local model produces a clear error; search never silently switches
+to metadata matching or the remote encoder. For a different CLIP model, explicitly
+set `ml.text_encoder: "remote"` to use the configured worker and matching tokenizer.
+Only the packaged `ViT-B-32__openai` model currently supports local query encoding.

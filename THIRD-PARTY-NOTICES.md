@@ -22,3 +22,11 @@ from https://github.com/syncthing/syncthing/releases/tag/v2.1.0 . Its license
 (MPL-2.0), authors and readme are retained beside the executable under
 `data_dir/syncthing/bin/v2.1.0/`. Syncthing runs as a separate process and is
 not linked into Home Images. Its source is available at that release tag.
+
+## Local CLIP text search
+
+The packaged `local-text` directory includes ONNX Runtime (Microsoft, MIT) and its
+upstream `ThirdPartyNotices.txt`, plus the OpenAI CLIP ViT-B/32 text model and
+tokenizer (MIT; `third-party-licenses/CLIP-LICENSE.txt`). Model assets are the Immich
+ONNX export at revision `a857c8de2c07bbcfa6646adfcf31b798845afa1e`. ONNX Runtime
+release 1.23.2 is distributed with its LICENSE and third-party notices.

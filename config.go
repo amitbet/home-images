@@ -25,16 +25,21 @@ type Config struct {
 }
 
 type MLConfig struct {
-	Concurrency    int     `json:"concurrency,omitempty"`
-	URL            string  `json:"url"`
-	Enabled        bool    `json:"enabled"`
-	ClipModel      string  `json:"clip_model"`
-	FaceModel      string  `json:"face_model"`
-	IntervalMS     int     `json:"interval_ms"`
-	FaceSimilarity float32 `json:"face_similarity"`
+	TextEncoder        string  `json:"text_encoder,omitempty"`
+	TextModelDirectory string  `json:"text_model_directory,omitempty"`
+	Concurrency        int     `json:"concurrency,omitempty"`
+	URL                string  `json:"url"`
+	Enabled            bool    `json:"enabled"`
+	ClipModel          string  `json:"clip_model"`
+	FaceModel          string  `json:"face_model"`
+	IntervalMS         int     `json:"interval_ms"`
+	FaceSimilarity     float32 `json:"face_similarity"`
 }
 
 func (c *MLConfig) defaults() {
+	if c.TextEncoder == "" {
+		c.TextEncoder = "local"
+	}
 	if c.ClipModel == "" {
 		c.ClipModel = "ViT-B-32__openai"
 	}
@@ -80,6 +85,9 @@ func loadConfig(path string) (Config, error) {
 		return c, fmt.Errorf("jpeg_decoder must be auto or go")
 	}
 	c.ML.defaults()
+	if c.ML.TextEncoder != "local" && c.ML.TextEncoder != "remote" {
+		return c, fmt.Errorf("ml.text_encoder must be local or remote")
+	}
 	if c.ML.URL != "" {
 		u, e := url.Parse(c.ML.URL)
 		if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

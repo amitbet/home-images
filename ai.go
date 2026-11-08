@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/amitbet/home-images/internal/cliptext"
 )
 
 type aiPipelineStats struct {
@@ -49,6 +51,8 @@ type AI struct {
 	lastSuccess         string
 	online              bool
 	textCache           map[string]vector
+	textMu              sync.Mutex
+	localText           *cliptext.Encoder
 	groupCache          map[string]photoGroupSummary
 	searchSlot          chan struct{}
 	suggestionSlot      chan struct{}
@@ -154,6 +158,12 @@ func (a *AI) Close() {
 		a.refreshCancel()
 		a.refreshWG.Wait()
 	}
+	a.textMu.Lock()
+	if a.localText != nil {
+		a.localText.Close()
+		a.localText = nil
+	}
+	a.textMu.Unlock()
 	a.flushPersonHNSW()
 	if a.ml != nil {
 		a.ml.http.CloseIdleConnections()
@@ -488,15 +498,7 @@ func (a *AI) textVector(ctx context.Context, q string) (vector, error) {
 	if v != nil {
 		return v, nil
 	}
-	// Interactive searches must not inherit the three-minute image inference
-	// timeout, including time waiting for a busy worker connection.
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	pred, err := a.ml.predict(ctx, nil, q)
-	if err != nil {
-		return nil, bad(503, "Content search could not reach the ML worker or it took too long. Try again when the worker is ready; your face filters are unchanged.")
-	}
-	v, err = parseVector(pred.Clip)
+	v, err := a.encodeQuery(ctx, q)
 	if err != nil {
 		return nil, err
 	}

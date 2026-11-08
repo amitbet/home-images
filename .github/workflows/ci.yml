@@ -71,6 +71,11 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
         run: bash scripts/package-turbojpeg.sh "$TARGET_ARCH" dist/package
+      - name: Package local text encoder
+        shell: pwsh
+        run: |
+          ./scripts/package-local-text.ps1 -OS '${{ matrix.os }}' -Architecture '${{ matrix.arch }}' -OutputDirectory dist/package
+          "HOMEIMAGES_TEST_TEXT_ASSETS=$((Resolve-Path dist/package/local-text).Path)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build standalone application and configure native tests
         shell: pwsh
         run: |

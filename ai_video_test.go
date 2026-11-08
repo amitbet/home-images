@@ -71,6 +71,7 @@ func TestVideoIndexPeopleFramesAndFilters(t *testing.T) {
 	}))
 	defer worker.Close()
 	l.ai.ml.config.URL = worker.URL
+	l.config.ML.TextEncoder = "remote" // This fixture uses synthetic 3D worker embeddings.
 	l.config.ML.URL = worker.URL
 	j := testJob(t, l, "sample.mp4")
 	var p Photo
@@ -251,6 +252,7 @@ func TestVideoFramesInferConcurrentlyInTimeOrder(t *testing.T) {
 	}))
 	defer worker.Close()
 	l.ai.ml.config.URL = worker.URL
+	l.config.ML.TextEncoder = "remote" // This fixture uses synthetic 3D worker embeddings.
 	l.config.ML.URL = worker.URL
 	l.config.ML.Concurrency = 3
 	j := testJob(t, l, "long.mp4")

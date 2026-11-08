@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $bundlePath = (Resolve-Path -LiteralPath $Bundle).Path
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
 $outputPath = (Resolve-Path -LiteralPath $Output).Path
+& (Join-Path $PSScriptRoot 'package-local-text.ps1') -OS $OS -Architecture $Architecture -OutputDirectory $bundlePath
 Copy-Item README.md,LICENSE,THIRD-PARTY-NOTICES.md,config.example.json -Destination $bundlePath
 if ($OS -eq 'windows') {
  Copy-Item install-windows.ps1,install.ps1 -Destination $bundlePath
@@ -24,6 +25,7 @@ try {
  if ($OS -eq 'windows') { $files += @('home-images.exe','turbojpeg.dll','install.ps1','install-windows.ps1') }
  else { $files += @('home-images',$codec,'install.sh','install-unix.sh') }
  foreach ($file in $files) { Copy-Item -LiteralPath (Join-Path $bundlePath $file) -Destination $stage }
+ Copy-Item -LiteralPath (Join-Path $bundlePath 'local-text') -Destination $stage -Recurse
  Copy-Item -LiteralPath (Join-Path $bundlePath 'turbojpeg-licenses') -Destination $stage -Recurse
  Copy-Item -LiteralPath 'third-party-licenses' -Destination $stage -Recurse
  if ($OS -eq 'windows') {

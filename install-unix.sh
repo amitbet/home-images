@@ -118,6 +118,7 @@ trap cleanup EXIT
 chmod 755 "$stage"
 install -m 755 "$bundle/home-images" "$stage/home-images"
 install -m 755 "$bundle/$library" "$stage/$library"
+if [[ -d "$bundle/local-text" ]]; then cp -R "$bundle/local-text" "$stage/local-text"; fi
 cp -R "$bundle/turbojpeg-licenses" "$stage/turbojpeg-licenses"
 cp -R "$bundle/third-party-licenses" "$stage/third-party-licenses"
 cp "$bundle/LICENSE" "$bundle/THIRD-PARTY-NOTICES.md" "$stage/"

@@ -162,9 +162,6 @@ const currentPersonImages = `id IN(SELECT f.image_id FROM faces f INDEXED BY fac
 
 func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, limit int) (playSelection, error) {
 	result := playSelection{Created: time.Now(), Mode: "semantic"}
-	if a.lib.config.ML.URL == "" {
-		return result, bad(503, "Configure the Mac ML worker to enable content search")
-	}
 	select {
 	case a.searchSlot <- struct{}{}:
 		defer func() { <-a.searchSlot }()

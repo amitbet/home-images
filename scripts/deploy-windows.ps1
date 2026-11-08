@@ -53,6 +53,8 @@ if ($sevenZip -or (Get-Command 7z -ErrorAction SilentlyContinue)) {
     Write-Warning 'No TurboJPEG codec (install 7-Zip to package it); JPEG decoding will use the slower built-in decoder'
 }
 
+& (Join-Path $PSScriptRoot 'package-local-text.ps1') -OS windows -OutputDirectory $package
+
 & (Join-Path $repo 'install-windows.ps1') -BinaryPath $binary -Destination $Destination -DataDirectory $DataDirectory
 
 $health = $null
