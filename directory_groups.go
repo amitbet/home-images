@@ -6,7 +6,7 @@ import (
 )
 
 func (a *AI) directoryGroups(w http.ResponseWriter, r *http.Request, q, mode, clause string, args []any, limit, offset int) error {
-	semantic := mode == "semantic" && q != ""
+	semantic := mode == "semantic" && (q != "" || r.URL.Query().Get("similar_to") != "")
 	if semantic {
 		selection, err := a.cachedSelection(r, q, "semantic", clause, args, semanticGroupPool)
 		if err != nil {

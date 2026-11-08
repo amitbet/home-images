@@ -4,6 +4,7 @@ const state = {
   view: "photos",
   layout: "grid",
   person: null,
+  similarTo: null,
   album: null,
   items: [],
   people: [],
@@ -230,6 +231,7 @@ function params() {
   p.set("direction", $("sortDirection").value);
   p.set("layout", state.layout);
   if (state.person) p.set("person", state.person.id);
+  if (state.similarTo) p.set("similar_to", state.similarTo);
   if (state.album) p.set("album", state.album.id);
   if (state.view === "favorites") p.set("favorite", "true");
   if (state.view === "hidden") p.set("hidden", "only");
@@ -293,6 +295,7 @@ function resetInputs() {
   for (const id of Object.values(fields)) $(id).value = "";
   $("query").value = "";
   state.person = null;
+  state.similarTo = null;
   state.album = null;
   state.savedName = "";
   state.groupScope = null;
@@ -313,6 +316,7 @@ function restoreQuery(query) {
   state.layout = p.get("layout") === "list" ? "list" : "grid";
   $("query").value = p.get("q") || "";
   $("mode").value = p.get("mode") === "metadata" ? "metadata" : "semantic";
+  state.similarTo = p.get("similar_to") || null;
   for (const [key, id] of Object.entries(fields))
     $(id).value = p.get(key) || "";
   if (p.get("person")) state.person = { id: Number(p.get("person")), name: "" };
@@ -336,6 +340,18 @@ const viewTitles = {
   memories: "On this day",
   hidden: "Hidden photos",
 };
+function updatePhotoOrdering() {
+  const ranked = $("mode").value === "semantic" && (!!$("query").value.trim() || !!state.similarTo);
+  const grouped = !!$("photoGroup").value;
+  const sort = $("photoSort"), direction = $("sortDirection");
+  const relevance = [...sort.options].find(option => option.value === "relevance");
+  relevance.hidden = relevance.disabled = !ranked;
+  if (!ranked && sort.value === "relevance") sort.value = "taken_at";
+  sort.disabled = ranked && grouped;
+  sort.title = sort.disabled ? "Photos within groups are ranked by visual similarity" : "";
+  direction.disabled = ranked && !grouped && sort.value === "relevance";
+  direction.title = direction.disabled ? "Best visual matches first" : "";
+}
 function viewChrome() {
   document.querySelectorAll("[data-view]").forEach((e) => {
     e.classList.toggle("active", e.dataset.view === state.view);
@@ -343,7 +359,7 @@ function viewChrome() {
     else e.removeAttribute("aria-current");
   });
   $("resultsTitle").textContent =
-    state.groupScope?.label || state.savedName || state.album?.name || viewTitles[state.view] || viewTitles.photos;
+    (state.similarTo ? "Similar photos" : state.groupScope?.label || state.savedName || state.album?.name || viewTitles[state.view]) || viewTitles.photos;
   $("query").placeholder =
     state.view === "people"
       ? "Search people"
@@ -351,11 +367,8 @@ function viewChrome() {
   $("searchForm").hidden = state.view === "albums";
   $("mode").hidden = state.view === "people";
   $("photoDisplayControls").hidden = !photoViews();
-  const ranked = $("mode").value === "semantic" && !!$("query").value.trim();
-  for (const id of ["photoSort", "sortDirection"]) {
-    $(id).disabled = ranked;
-    $(id).title = ranked ? "Content searches are ranked by visual similarity" : "";
-  }
+  updatePhotoOrdering();
+  const ranked = $("mode").value === "semantic" && (!!$("query").value.trim() || !!state.similarTo);
   $("photoGroup").disabled = false;
   if (ranked && $("photoGroup").value) {
     $("sortDirection").disabled = false;
@@ -392,7 +405,7 @@ function viewChrome() {
 function renderBreadcrumbs() {
   const query=params();query.set("view",state.view);
   for(const key of ["offset","layout","sort","direction"])query.delete(key);
-  const key=query.toString(),label=($("photoGroup").value ? ($("photoGroup").value === "directory" ? "Directories" : $("photoGroup").selectedOptions[0].textContent) : state.groupScope?.label || state.person?.name || state.album?.name || ($("query").value.trim() ? "Search: "+$("query").value.trim() : viewTitles[state.view])) || "Photos";
+  const key=query.toString(),label=($("photoGroup").value ? ($("photoGroup").value === "directory" ? "Directories" : $("photoGroup").selectedOptions[0].textContent) : state.similarTo ? "Similar photos" : state.groupScope?.label || state.person?.name || state.album?.name || ($("query").value.trim() ? "Search: "+$("query").value.trim() : viewTitles[state.view])) || "Photos";
   if (!state.navigation.length && state.groupScope) {
     const parent = new URLSearchParams(query);
     parent.delete("group_scopes");
@@ -553,6 +566,7 @@ function filterChips() {
   $("filtersToggle").title = active ? "Filters active" : "Photo filters";
   if (!photoViews()) return;
   const chips = [];
+  if (state.similarTo) chips.push({label:"Similar to selected photo",clear:()=>{state.similarTo=null;}});
   if (state.album)
     chips.push({
       label: "Album: " + state.album.name,
@@ -593,6 +607,7 @@ let searchController;
 let facesController;
 let playbackController;
 async function load(forcePeopleRefresh = false) {
+  if ($("query").value.trim() || $("mode").value !== "semantic") state.similarTo = null;
   if (searchController) searchController.abort();
   searchController = typeof AbortController === "function" ? new AbortController() : null;
   const signal = searchController?.signal;
@@ -604,7 +619,9 @@ async function load(forcePeopleRefresh = false) {
   resetThumbnailRequests();
   for (const id of ["gallery", "people", "albums"]) $(id).replaceChildren();
   state.items = [];
-  $("resultsCount").textContent = "Loading...";
+  $("resultsCount").textContent = state.view === "people" ? "Finding people…" : state.view === "albums" ? "Loading albums…" : state.similarTo ? "Searching for similar photos…" :
+    $("mode").value === "semantic" && $("query").value.trim() ? "Encoding text and searching photos…" : "Searching photos…";
+  $("resultsCount").classList.add("search-loading");
   state.selected.clear();
   selectionBar();
   notice("");
@@ -657,9 +674,13 @@ async function load(forcePeopleRefresh = false) {
       state.bag = [];
       state.shuffleStarted = false;
       if(result.directory_groups || result.photo_groups){state.items=[...result.items];state.total=result.total;state.semantic=false;state.grouped=false;renderPhotoGroupFolders(result);$("resultsCount").textContent=number(result.total)+(result.group_by === "directory" || result.directory_groups ? " directories" : " groups");if(!result.items.length)empty("No groups found", "Try changing your filters.");pagination();return true;}
+      $("resultsCount").textContent = "Loading photo details…";
       const annotations = await api("/api/curation", {
         ids: result.items.map((p) => p.id),
       });
+      if (gen !== state.generation) return;
+      $("resultsCount").textContent = "Preparing photo grid…";
+      await new Promise(requestAnimationFrame);
       if (gen !== state.generation) return;
       state.items = [...result.items];
       state.total = result.total;
@@ -675,7 +696,10 @@ async function load(forcePeopleRefresh = false) {
         : number(result.total) + " photos";
       if (result.semantic)
         notice(
-          result.group_by ? `Top ${number(result.unique_total)} matching photos grouped; ranked by visual similarity within each group.` : "Ranked by visual similarity across indexed photos.",
+          result.group_by ? `Top ${number(result.unique_total)} matching photos grouped; ranked by visual similarity within each group.` :
+            $("photoSort").value === "relevance" ? "Ranked by visual similarity across indexed photos." :
+            "Best visual matches sorted by " + $("photoSort").selectedOptions[0].textContent.toLowerCase() +
+              ($("sortDirection").value === "asc" ? " (ascending)." : " (descending)."),
         );
       if (!result.items.length)
         empty(
@@ -706,6 +730,7 @@ async function load(forcePeopleRefresh = false) {
   } finally {
     if (gen === state.generation) {
       state.loadingGrid = false;
+      $("resultsCount").classList.remove("search-loading");
       $("gallery").classList.remove("loading");
       $("people").classList.remove("loading");
       $("gallery").setAttribute("aria-busy", "false");
@@ -2295,6 +2320,26 @@ $("closeViewer").onclick = () => {
   closeModal("viewer");
 };
 $("viewerBack").onclick = () => $("closeViewer").click();
+function findSimilarPhotos() {
+  const photo = currentPhoto();
+  if (!photo) return;
+  if (state.dirty && !confirm("Discard unsaved photo details?")) return;
+  stopPlay();
+  closingViewerForNavigation = true;
+  closeModal("viewer");
+  state.similarTo = photo.id;
+  state.view = "photos";
+  state.offset = 0;
+  state.savedName = "";
+  $("query").value = "";
+  $("mode").value = "semantic";
+  $("photoGroup").value = "";
+  $("photoSort").value = "relevance";
+  $("sortDirection").value = "desc";
+  void load();
+  window.scrollTo(0, 0);
+}
+$("findSimilar").onclick = findSimilarPhotos;
 $("viewer").addEventListener("cancel", (e) => {
   if (state.dirty && !confirm("Discard unsaved photo details?"))
     e.preventDefault();
@@ -2455,6 +2500,7 @@ $("resetFilters").onclick = () => {
   state.album = null;
   state.person = null;
   state.peopleFilters = [];
+  state.similarTo = null;
   closeModal("filters");
   state.offset = 0;
   state.savedName = "";

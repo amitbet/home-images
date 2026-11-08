@@ -15,7 +15,7 @@ func (a *AI) photoGroupFolders(w http.ResponseWriter, r *http.Request, q, mode, 
 	default:
 		return bad(400, "Unknown photo grouping")
 	}
-	semantic := mode == "semantic" && q != ""
+	semantic := mode == "semantic" && (q != "" || r.URL.Query().Get("similar_to") != "")
 	if semantic {
 		selection, err := a.cachedSelection(r, q, "semantic", clause, args, semanticGroupPool)
 		if err != nil {

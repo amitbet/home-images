@@ -7,6 +7,63 @@ function extract(start, end) {
   return source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 }
 
+test('reloaded semantic links honor date ordering and enable direction controls', () => {
+  const state = {};
+  const nodes = Object.fromEntries(['query','mode','photoSort','sortDirection','photoGroup'].map(id=>[id,{value:''}]));
+  nodes.photoSort.options = ['filename','taken_at','relevance'].map(value=>({value}));
+  nodes.photoGroup.options = ['','year'].map(value=>({value}));
+  const context = vm.createContext({state,fields:{},URLSearchParams,$:id=>nodes[id]});
+  vm.runInContext(extract('function resetInputs()', 'const viewTitles ='),context);
+  vm.runInContext(extract('function updatePhotoOrdering()', 'function viewChrome()'),context);
+  context.restoreQuery('mode=semantic&q=throwing+kids+up+to+the+sky&people_filter=%5B%22144%22%2C%223944%22%5D&sort=taken_at&direction=desc&layout=grid&view=photos&offset=0');
+  context.updatePhotoOrdering();
+  assert.equal(nodes.photoSort.value,'taken_at');
+  assert.equal(nodes.sortDirection.value,'desc');
+  assert.equal(nodes.photoSort.disabled,false);
+  assert.equal(nodes.sortDirection.disabled,false);
+  assert.deepEqual(Array.from(state.peopleFilters,p=>p.id),[144,3944]);
+  nodes.sortDirection.value='asc'; context.updatePhotoOrdering();
+  assert.equal(nodes.sortDirection.disabled,false);
+  nodes.photoSort.value='relevance'; context.updatePhotoOrdering();
+  assert.equal(nodes.sortDirection.disabled,true);
+  nodes.photoGroup.value='year'; context.updatePhotoOrdering();
+  assert.equal(nodes.photoSort.disabled,true);
+  assert.equal(nodes.sortDirection.disabled,false);
+  nodes.mode.value='metadata'; context.updatePhotoOrdering();
+  assert.equal(nodes.photoSort.value,'taken_at');
+  assert.equal(nodes.sortDirection.disabled,false);
+  assert.equal(nodes.photoSort.options.at(-1).hidden,true);
+});
+
+test('Find similar keeps filters, selects relevance, and restores its source from a link', () => {
+  const nodes=Object.fromEntries(['query','mode','photoSort','sortDirection','photoGroup'].map(id=>[id,{value:''}]));
+  nodes.photoSort.options=['filename','taken_at','relevance'].map(value=>({value}));
+  nodes.photoGroup.options=['','year'].map(value=>({value}));
+  const state={peopleFilters:[{id:144}],groupScopes:[],layout:'grid',navigation:[],dirty:false};
+  let loaded=0;
+  const context=vm.createContext({state,fields:{},URLSearchParams,$:id=>nodes[id],currentPhoto:()=>({id:'source-photo'}),
+    stopPlay(){},closeModal(){},load(){loaded++;},window:{scrollTo(){}},confirm(){return true;}});
+  vm.runInContext('let closingViewerForNavigation=false;'+extract('function findSimilarPhotos()', '$("findSimilar").onclick'),context);
+  context.findSimilarPhotos();
+  assert.equal(loaded,1);
+  assert.equal(state.similarTo,'source-photo');
+  assert.equal(state.peopleFilters[0].id,144);
+  assert.equal(nodes.query.value,'');
+  assert.equal(nodes.photoSort.value,'relevance');
+  vm.runInContext(extract('function params()', 'let navigationReady ='),context);
+  const url=context.params().toString();
+  vm.runInContext(extract('function resetInputs()', 'const viewTitles ='),context);
+  context.restoreQuery(url);
+  assert.equal(state.similarTo,'source-photo');
+  assert.equal(state.peopleFilters[0].id,144);
+  assert.equal(nodes.photoSort.value,'relevance');
+  assert.equal(context.params().get('similar_to'),'source-photo');
+  state.dirty=true;
+  context.confirm=()=>false;
+  context.findSimilarPhotos();
+  assert.equal(loaded,1);
+});
+
 test('sidebar navigation starts a fresh breadcrumb and clears person and grouping scopes', () => {
   const state = { navigation: [{label:'People'}, {label:'Michal'}], person: {id:956},
     peopleFilters: [{id:2}], groupScopes: [{kind:'year',key:'2024'}], selected: new Set([1]) };

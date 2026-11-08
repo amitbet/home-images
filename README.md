@@ -449,12 +449,21 @@ blur, or unusual angles. Renaming changes a label; it does not retrain the model
 Content search ranks photos by text/image similarity, e.g. "dog", "beach", or
 "birthday party". It **does not return verified object labels or object boxes**.
 Only indexed photos participate; even weak matches may appear in ranked results.
-An uncached query needs the Mac to encode the text. Previously cached queries,
-people filters, and ordinary browsing remain usable without the Mac.
+Text queries use the packaged local encoder by default; the Mac is only needed
+when `ml.text_encoder=remote` is explicitly configured. In the photo viewer,
+**Find similar photos** uses that photo's current indexed embedding without an ML
+request and keeps the selected face and other filters. The source is excluded.
+Content results can be sorted by visual similarity or by the photo sort controls;
+date and other sorts apply to the best 1,200 matches before pagination. Grouped
+results retain similarity ordering within each group.
 
 - `GET /api/search?mode=semantic&q=beach&person=12&limit=60&offset=0` returns ranked
   photos, with optional person/directory filters. `mode=metadata` searches literal
   path and EXIF text; an empty query browses the library. Offset is bounded at 1000.
+- `GET /api/search?mode=semantic&similar_to=PHOTO_ID&sort=relevance&limit=60`
+  finds similar indexed photos. Use either `similar_to` or text `q`, not both.
+  An unindexed or stale source returns 404 with an indexing notice. Add
+  `people_filter=["12","34"]` (URL encoded) to require both face tags.
 - `GET /api/people?q=Dana&limit=48&offset=0` lists groups, names and photo counts.
 - `GET /api/people/12/suggestions?limit=25&offset=0&min_score=0.3` returns
   similar groups. `search_index` is `hnsw`; when `approximate` is true, `total`

@@ -548,7 +548,11 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 500 {
 		return bad(400, "Query too long")
 	}
-	if mode == "semantic" && q != "" && r.URL.Query().Get("group_by") == "" && offset > 1000 {
+	if err = validateImageSearch(r); err != nil {
+		return err
+	}
+	contentQuery := q != "" || r.URL.Query().Get("similar_to") != ""
+	if mode == "semantic" && contentQuery && r.URL.Query().Get("group_by") == "" && offset > 1000 {
 		return bad(422, "Semantic search offset exceeds 1000")
 	}
 	order, sortArgs, err := a.photoOrder(r)
@@ -566,12 +570,12 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		return a.directoryGroups(w, r, q, mode, clause, args, limit, offset)
 	}
 	if r.URL.Query().Get("group_by") != "" {
-		if mode == "semantic" && q != "" {
+		if mode == "semantic" && contentQuery {
 			return a.semanticGroupedSearch(w, r, q, clause, args, limit, offset)
 		}
 		return a.groupedSearch(w, r, clause, args, order, sortArgs, limit, offset)
 	}
-	if mode == "metadata" || q == "" {
+	if mode == "metadata" || !contentQuery {
 		var total int
 		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM catalog.images i WHERE "+clause, args...).Scan(&total); err != nil {
 			return err
@@ -603,9 +607,17 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		}
 		return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "semantic": false})
 	}
-	selection, err := a.rankSelection(r.Context(), q, clause, args, offset+limit)
+	poolLimit := offset + limit
+	sorted := r.URL.Query().Get("sort") != "" && r.URL.Query().Get("sort") != "relevance"
+	if sorted {
+		poolLimit = semanticGroupPool
+	}
+	selection, err := a.rankSelection(r.Context(), q, clause, args, poolLimit, r.URL.Query().Get("similar_to"))
 	if err != nil {
 		return err
+	}
+	if sorted {
+		return a.sortedSemanticSearch(w, r, selection, order, sortArgs, limit, offset)
 	}
 	ordered, total := selection.Hits, selection.Total
 	items := []map[string]any{}
@@ -764,7 +776,7 @@ func (a *AI) photoOrder(r *http.Request) (string, []any, error) {
 	switch r.URL.Query().Get("sort") {
 	case "filename":
 		return "i.path COLLATE NOCASE " + strings.ToUpper(direction) + ",i.path", nil, nil
-	case "", "taken_at":
+	case "", "taken_at", "relevance":
 		expr = "nullif(i.taken_at,'')"
 	case "created_at":
 		expr = "i.created_at"

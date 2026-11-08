@@ -79,6 +79,10 @@ func (a *AI) playbackFilter(r *http.Request, mode string) (string, []any, error)
 	if err != nil {
 		return "", nil, err
 	}
+	if source := r.URL.Query().Get("similar_to"); source != "" {
+		clause += " AND i.id!=?"
+		args = append(args, source)
+	}
 	people := []string{}
 	if person := r.URL.Query().Get("person"); person != "" {
 		people = append(people, person)
@@ -160,7 +164,7 @@ const currentPersonImages = `id IN(SELECT f.image_id FROM faces f INDEXED BY fac
  CROSS JOIN catalog.images current INDEXED BY image_person_capture ON current.id=ai.image_id AND current.signature=ai.signature
  WHERE f.person_id=? AND ai.models=? AND ai.error='')`
 
-func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, limit int) (playSelection, error) {
+func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, limit int, source ...string) (playSelection, error) {
 	result := playSelection{Created: time.Now(), Mode: "semantic"}
 	select {
 	case a.searchSlot <- struct{}{}:
@@ -168,7 +172,13 @@ func (a *AI) rankSelection(ctx context.Context, q, clause string, args []any, li
 	default:
 		return result, bad(429, "Another content search is running; try again shortly")
 	}
-	v, err := a.textVector(ctx, q)
+	var v vector
+	var err error
+	if len(source) > 0 && source[0] != "" {
+		v, err = a.imageQueryVector(ctx, source[0])
+	} else {
+		v, err = a.textVector(ctx, q)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -261,7 +271,7 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 				var next playSelection
 				var err error
 				if mode == "semantic" {
-					next, err = a.rankSelection(ctx, q, clause, args, limit)
+					next, err = a.rankSelection(ctx, q, clause, args, limit, r.URL.Query().Get("similar_to"))
 				} else {
 					next, err = a.metadataSelection(request, clause, args)
 				}
@@ -281,7 +291,7 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 	var selection playSelection
 	var err error
 	if mode == "semantic" {
-		selection, err = a.rankSelection(r.Context(), q, clause, args, limit)
+		selection, err = a.rankSelection(r.Context(), q, clause, args, limit, r.URL.Query().Get("similar_to"))
 	} else {
 		selection, err = a.metadataSelection(r, clause, args)
 	}
@@ -331,7 +341,10 @@ func (a *AI) playbackNext(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(q) > 500 {
 		return bad(400, "Query too long")
 	}
-	if q == "" {
+	if err = validateImageSearch(r); err != nil {
+		return err
+	}
+	if q == "" && query.Get("similar_to") == "" {
 		mode = "metadata"
 	}
 	clause, args, err := a.playbackFilter(r, mode)
