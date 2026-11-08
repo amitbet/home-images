@@ -495,16 +495,7 @@ async function gridPage(p, signal) {
   const key = p.toString();
   const cached = gridPages.get(key);
   if (cached && Date.now() - cached.created < 30000) return cached.result;
-  let result;
-  try {
-    result = await api("/api/search?" + p, undefined, signal);
-  } catch (error) {
-    if (error.status !== 503 || p.get("mode") !== "semantic" || !p.get("q") || signal?.aborted) throw error;
-    const fallback = new URLSearchParams(p);
-    fallback.set("mode", "metadata");
-    result = await api("/api/search?" + fallback, undefined, signal);
-    result.metadata_fallback = true;
-  }
+  const result = await api("/api/search?" + p, undefined, signal);
   gridPages.delete(key);
   gridPages.set(key, {result, created: Date.now()});
   while (gridPages.size > 12) gridPages.delete(gridPages.keys().next().value);
@@ -634,12 +625,6 @@ async function load(forcePeopleRefresh = false) {
       p.set("offset", state.offset);
       const result = await gridPage(p, signal);
       if (gen !== state.generation) return;
-      if (result.metadata_fallback) {
-        $("mode").value = "metadata";
-        viewChrome();
-        syncURL(true);
-        notice("Content search is unavailable. Showing Files & metadata matches with your selected filters.");
-      }
       state.bag = [];
       state.shuffleStarted = false;
       if(result.directory_groups || result.photo_groups){state.items=[...result.items];state.total=result.total;state.semantic=false;state.grouped=false;renderPhotoGroupFolders(result);$("resultsCount").textContent=number(result.total)+(result.group_by === "directory" || result.directory_groups ? " directories" : " groups");if(!result.items.length)empty("No groups found", "Try changing your filters.");pagination();return true;}

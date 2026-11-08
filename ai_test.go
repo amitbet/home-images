@@ -124,6 +124,11 @@ func TestAIIndexSearchNamesAndInvalidation(t *testing.T) {
 	if getJSON(t, s, "/api/search?q=beach&person="+fmtID(id), &result) != 200 || len(result.Items) != 2 {
 		t.Fatal(result)
 	}
+	// Quick face-tag filters must intersect semantic candidates before ranking,
+	// without treating the content query as filename/metadata text.
+	if getJSON(t, s, "/api/search?mode=semantic&q=beach&people_filter="+peopleFilter, &result) != 200 || result.Total != 1 || len(result.Items) != 1 || result.Items[0].ID != j.ID {
+		t.Fatalf("semantic people intersection: %+v", result)
+	}
 	// Updated source metadata invalidates both semantic and person matches before reindexing.
 	if _, err := l.db.Exec("UPDATE images SET signature='changed' WHERE id=?", j.ID); err != nil {
 		t.Fatal(err)

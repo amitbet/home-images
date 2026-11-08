@@ -26,21 +26,18 @@ test('sidebar navigation starts a fresh breadcrumb and clears person and groupin
   }
 });
 
-test('offline content search retries metadata with every person and filter intact', async () => {
+test('unavailable content search keeps semantic mode and selected people without retrying metadata', async () => {
   const requests = [];
   const context = vm.createContext({ URLSearchParams, api: async path => {
-    const p = new URL(path, 'http://localhost').searchParams;
-    requests.push(p);
-    if (p.get('mode') === 'semantic') throw Object.assign(Error('worker unavailable'), {status:503});
-    return {items:[{id:'match'}],total:1,semantic:false};
+    requests.push(new URL(path, 'http://localhost').searchParams);
+    throw Object.assign(Error('Content search unavailable'), {status:503});
   }});
   vm.runInContext(extract('const gridPages =', 'function filterChips'), context);
-  const p = new URLSearchParams({mode:'semantic',q:'beach',person:'956',people_filter:'["1","2"]',directory:'Family',tag:'holiday',group_by:'year',group_view:'folders',limit:'60',offset:'0'});
-  const result = await context.gridPage(p);
-  assert.equal(result.metadata_fallback, true);
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].get('mode'), 'metadata');
-  for (const [key,value] of p) if (key !== 'mode') assert.equal(requests[1].get(key), value);
+  const p = new URLSearchParams({mode:'semantic',q:'tree',person:'956',people_filter:'["1","2"]'});
+  await assert.rejects(context.gridPage(p), /Content search unavailable/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].get('mode'), 'semantic');
+  assert.equal(requests[0].get('people_filter'), '["1","2"]');
   assert.equal(p.get('mode'), 'semantic');
 });
 

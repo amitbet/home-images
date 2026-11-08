@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ type mlClient struct {
 }
 
 func newML(c MLConfig) *mlClient {
-	return &mlClient{c, &http.Client{Timeout: 180 * time.Second, Transport: &http.Transport{MaxIdleConnsPerHost: 6, MaxConnsPerHost: 6, ResponseHeaderTimeout: 175 * time.Second}}}
+	return &mlClient{c, &http.Client{Timeout: 180 * time.Second, Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext, MaxIdleConnsPerHost: 6, MaxConnsPerHost: 6, ResponseHeaderTimeout: 175 * time.Second}}}
 }
 func (m *mlClient) predict(ctx context.Context, image []byte, text string) (mlPrediction, error) {
 	var out mlPrediction

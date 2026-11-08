@@ -488,9 +488,13 @@ func (a *AI) textVector(ctx context.Context, q string) (vector, error) {
 	if v != nil {
 		return v, nil
 	}
+	// Interactive searches must not inherit the three-minute image inference
+	// timeout, including time waiting for a busy worker connection.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	pred, err := a.ml.predict(ctx, nil, q)
 	if err != nil {
-		return nil, bad(503, "The Mac ML worker is unavailable. Indexed people and photo browsing still work.")
+		return nil, bad(503, "Content search could not reach the ML worker or it took too long. Try again when the worker is ready; your face filters are unchanged.")
 	}
 	v, err = parseVector(pred.Clip)
 	if err != nil {
