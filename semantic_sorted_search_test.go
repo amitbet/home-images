@@ -61,3 +61,39 @@ func TestSemanticSortBeforePagination(t *testing.T) {
 		t.Fatalf("unfiltered second page: %d %+v", status, all)
 	}
 }
+
+// Scrolling pages through one ranked snapshot instead of rescanning vectors.
+func TestSemanticPagesReuseRanking(t *testing.T) {
+	l, s, _ := fixture(t)
+	jobs := []aiJob{testJob(t, l, "a.jpg"), testJob(t, l, "b.jpg"), testJob(t, l, "album_100%/c.jpg")}
+	for index, job := range jobs {
+		pred := syntheticPrediction()
+		pred.Clip, _ = json.Marshal([]float32{float32(3 - index), float32(index), 0})
+		if err := l.ai.save(context.Background(), job, pred); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l.ai.textCache["paging"] = vector{1, 0, 0}
+	page := func(offset int) []string {
+		var result struct{ Items []Photo }
+		path := fmt.Sprintf("/api/search?mode=semantic&q=paging&limit=2&offset=%d", offset)
+		if status := getJSON(t, s, path, &result); status != 200 {
+			t.Fatalf("%s: status=%d", path, status)
+		}
+		ids := []string{}
+		for _, item := range result.Items {
+			ids = append(ids, item.ID)
+		}
+		return ids
+	}
+	if got := page(0); len(got) != 2 || got[0] != jobs[0].ID || got[1] != jobs[1].ID {
+		t.Fatalf("first page: %v", got)
+	}
+	// Without the cached embedding, a fresh ranking would have to encode the query.
+	l.ai.mu.Lock()
+	delete(l.ai.textCache, "paging")
+	l.ai.mu.Unlock()
+	if got := page(2); len(got) != 1 || got[0] != jobs[2].ID {
+		t.Fatalf("second page: %v", got)
+	}
+}

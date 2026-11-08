@@ -607,21 +607,18 @@ func (a *AI) search(w http.ResponseWriter, r *http.Request) error {
 		}
 		return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "semantic": false})
 	}
-	poolLimit := offset + limit
-	sorted := r.URL.Query().Get("sort") != "" && r.URL.Query().Get("sort") != "relevance"
-	if sorted {
-		poolLimit = semanticGroupPool
-	}
-	selection, err := a.rankSelection(r.Context(), q, clause, args, poolLimit, r.URL.Query().Get("similar_to"))
+	// Rank the full reachable pool once and page through the cached snapshot,
+	// so scrolling doesn't rescan every vector for each page.
+	selection, err := a.cachedSelection(r, q, "semantic", clause, args, semanticGroupPool)
 	if err != nil {
 		return err
 	}
-	if sorted {
+	if by := r.URL.Query().Get("sort"); by != "" && by != "relevance" {
 		return a.sortedSemanticSearch(w, r, selection, order, sortArgs, limit, offset)
 	}
 	ordered, total := selection.Hits, selection.Total
 	items := []map[string]any{}
-	for _, hit := range ordered[min(offset, len(ordered)):] {
+	for _, hit := range ordered[min(offset, len(ordered)):min(offset+limit, len(ordered))] {
 		p, e := a.lib.get(r.Context(), hit.ID)
 		if e != nil {
 			continue

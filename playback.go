@@ -4,9 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math/rand/v2"
 	"net/http"
 	"runtime"
@@ -246,6 +248,16 @@ func (a *AI) cachedSelection(r *http.Request, q, mode, clause string, args []any
 	filters.Set("pool_limit", strconv.Itoa(limit))
 	filters.Set("mode", mode)
 	filters.Set("q", q)
+	if source := r.URL.Query().Get("similar_to"); mode == "semantic" && source != "" {
+		// Reject a changed source photo, and rank again once it is re-indexed.
+		v, err := a.imageQueryVector(r.Context(), source)
+		if err != nil {
+			return playSelection{}, err
+		}
+		h := fnv.New64a()
+		_ = binary.Write(h, binary.LittleEndian, []float32(v))
+		filters.Set("source_vector", strconv.FormatUint(h.Sum64(), 16))
+	}
 	generation := "initial"
 	if scan := a.lib.Status().LastScan; scan != nil {
 		generation = *scan
