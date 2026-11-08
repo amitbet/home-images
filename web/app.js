@@ -388,7 +388,19 @@ function renderBreadcrumbs() {
     const option = [...$("photoGroup").options].find(o => o.value === state.groupScope.kind);
     state.navigation.push({key: parent.toString(), label: option?.textContent || "Groups"});
   }
-  if(!state.navigation.length || state.navigation.at(-1).key!==key)state.navigation.push({key,label});
+  // Search refinements update the current location rather than adding ancestors.
+  const scopeKey = value => {
+    const scope = new URLSearchParams(value);
+    for (const field of ["q", "mode"]) scope.delete(field);
+    scope.sort();
+    return scope.toString();
+  };
+  const previous = state.navigation.at(-1);
+  if (previous && scopeKey(previous.key) === scopeKey(key)) {
+    state.navigation[state.navigation.length - 1] = {key, label};
+  } else {
+    state.navigation.push({key, label});
+  }
   const nav=$("breadcrumbs");nav.replaceChildren();
   const home=text("button","All photos");home.onclick=()=>{state.navigation=[];restoreQuery("");state.offset=0;load();window.scrollTo(0,0);};nav.append(home);
   state.navigation.forEach((entry,index)=>{
