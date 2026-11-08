@@ -6,14 +6,17 @@ const source = fs.readFileSync('web/app.js', 'utf8');
 const navigation = source.slice(source.indexOf('let navigationReady ='), source.indexOf('window.addEventListener("popstate"'));
 
 function breadcrumbFixture() {
-  const state = {view:'photos', navigation:[], groupScopes:[]};
+  const state = {view:'photos', navigation:[], groupScopes:[], peopleFilters:[], filters:{}};
   const nodes = {query:{value:''}, photoGroup:{value:''}, breadcrumbs:{
     children:[], replaceChildren(){this.children=[];}, append(...items){this.children.push(...items);},
   }};
   const restored = [];
   const context = vm.createContext({state, URLSearchParams, viewTitles:{photos:'All photos',people:'People'},
     $:id=>nodes[id], params:()=>new URLSearchParams({mode:nodes.mode?.value || 'semantic',
-      q:nodes.query.value, ...(state.person ? {person:String(state.person.id)} : {})}),
+      q:nodes.query.value, ...state.filters,
+      ...(state.peopleFilters.length ? {people_filter:JSON.stringify(state.peopleFilters.map(p=>String(p.id)))} : {}),
+      ...(state.person ? {person:String(state.person.id)} : {}),
+      ...(state.groupScopes.length ? {group_scopes:JSON.stringify(state.groupScopes)} : {})}),
     text:(_tag,label)=>({label}), restoreQuery:key=>restored.push(key), load(){}, window:{scrollTo(){}},
   });
   vm.runInContext(source.slice(source.indexOf('function renderBreadcrumbs()'), source.indexOf('async function enterPhotoGroup(')), context);
@@ -50,6 +53,27 @@ test('searching within a person retains People and one person breadcrumb', () =>
   assert.equal(new URLSearchParams(state.navigation[1].key).get('mode'),'metadata');
   state.person={id:16,name:'Alex'}; render();
   assert.deepEqual(Array.from(state.navigation,e=>e.label),['People','Amit','Alex']);
+});
+
+test('adding and removing face tags and filters refines one search breadcrumb', () => {
+  const {state,nodes,restored,render} = breadcrumbFixture();
+  nodes.query.value='tree'; render();
+  state.peopleFilters=[{id:144,name:'Amit'}]; render();
+  assert.equal(state.navigation.length,1);
+  nodes.breadcrumbs.children.at(-1).onclick();
+  assert.equal(new URLSearchParams(restored.at(-1)).get('people_filter'),'["144"]');
+  state.peopleFilters.push({id:16,name:'Alex'}); render();
+  state.filters={from:'2024-01-01',tag:'family',media_type:'photos'}; render();
+  state.peopleFilters=[]; render();
+  state.filters={}; render();
+  assert.deepEqual(Array.from(state.navigation,e=>e.label),['Search: tree']);
+  assert.equal(new URLSearchParams(state.navigation[0].key).has('people_filter'),false);
+  // Opening a real group still adds a navigation level.
+  state.groupScope={kind:'year',key:'2024',label:'2024'};
+  state.groupScopes=[state.groupScope]; render();
+  assert.deepEqual(Array.from(state.navigation,e=>e.label),['Search: tree','2024']);
+  state.peopleFilters=[{id:144,name:'Amit'}]; render();
+  assert.equal(state.navigation.length,2);
 });
 test('screen changes preserve history while refreshes and viewer steps replace it', () => {
   const entries = ['/'];

@@ -388,11 +388,12 @@ function renderBreadcrumbs() {
     const option = [...$("photoGroup").options].find(o => o.value === state.groupScope.kind);
     state.navigation.push({key: parent.toString(), label: option?.textContent || "Groups"});
   }
-  // Search refinements update the current location rather than adding ancestors.
+  // Only navigation scopes create ancestors; search and filter refinements do not.
   const scopeKey = value => {
-    const scope = new URLSearchParams(value);
-    for (const field of ["q", "mode"]) scope.delete(field);
-    scope.sort();
+    const query = new URLSearchParams(value), scope = new URLSearchParams();
+    for (const field of ["view", "person", "album", "group_by", "group_view", "group_scopes", "group_kind", "group_key", "group_label"]) {
+      if (query.has(field)) scope.set(field, query.get(field));
+    }
     return scope.toString();
   };
   const previous = state.navigation.at(-1);
