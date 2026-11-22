@@ -110,6 +110,11 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 			p.TakenAtOffset = &offset
 		}
 	}
+	// Some edited JPEGs have valid EXIF that the primary decoder only partially
+	// reads. Use the independent raw decoder before treating capture time as absent.
+	if p.TakenAt == nil {
+		p.TakenAt = rawCaptureTime(raw)
+	}
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return p, err
 	}
@@ -144,6 +149,31 @@ func (l *Library) metadata(ctx context.Context, relative string) (p Photo, err e
 		p.Width, p.Height = p.Height, p.Width
 	}
 	return p, nil
+}
+
+func rawCaptureTime(raw *rawexif.Exif) *string {
+	if raw == nil {
+		return nil
+	}
+	tag, err := raw.Get(rawexif.DateTimeOriginal)
+	if err != nil {
+		return nil
+	}
+	value, err := tag.StringVal()
+	if err != nil {
+		return nil
+	}
+	value = strings.TrimSpace(strings.TrimRight(value, "\x00"))
+	parsed, err := time.Parse("2006:01:02 15:04:05", value)
+	if err != nil {
+		// Some phone editors store an ISO date in the EXIF ASCII field.
+		parsed, err = time.Parse("2006-01-02 15:04:05", value)
+	}
+	if err != nil {
+		return nil
+	}
+	taken := parsed.Format("2006:01:02 15:04:05")
+	return &taken
 }
 
 type rawTags map[string]any
