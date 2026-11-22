@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"log"
+
 	"math"
-	"time"
 
 	"github.com/disintegration/imaging"
 )
@@ -84,76 +83,4 @@ func (l *Library) seedFaceThumbnails(ctx context.Context, p Photo, preview []byt
 			return out.Bytes(), e
 		})
 	}
-}
-
-// Warm the same highest-scoring face selected by faceImage, largest groups first.
-// Share the single background decoder with indexing and yield to foreground work.
-func (l *Library) warmPeopleThumbnails(ctx context.Context) {
-	if !waitContext(ctx, 5*time.Second) {
-		return
-	}
-	if err := l.warmPeoplePass(ctx); err != nil && ctx.Err() == nil {
-		log.Printf("People thumbnail warming: %v", err)
-	}
-	if ctx.Err() == nil {
-		log.Print("People thumbnail startup pass finished; new faces are seeded by indexing")
-	}
-}
-func (l *Library) warmPeoplePass(ctx context.Context) error {
-	if !l.ai.waitIndexing(ctx, true) {
-		return ctx.Err()
-	}
-	rows, err := l.ai.read.QueryContext(ctx, `WITH ranked AS (
- SELECT f.image_id,f.box,f.width,f.height,
- row_number() OVER(PARTITION BY f.person_id ORDER BY f.score DESC,f.id) AS rank,
- count(*) OVER(PARTITION BY f.person_id) AS count
- FROM faces f JOIN ai_images a ON a.image_id=f.image_id
- JOIN catalog.images i ON i.id=a.image_id AND i.signature=a.signature
- WHERE a.models=? AND a.error='' AND i.id NOT IN(SELECT image_id FROM curation.annotations WHERE root=? AND hidden=1))
- SELECT image_id,box,width,height FROM ranked WHERE rank=1 ORDER BY count DESC,image_id`, l.ai.models, l.rootPath)
-	if err != nil {
-		return err
-	}
-	type cover struct {
-		id, box       string
-		width, height int
-	}
-	var covers []cover
-	for rows.Next() {
-		var c cover
-		if err = rows.Scan(&c.id, &c.box, &c.width, &c.height); err != nil {
-			break
-		}
-		covers = append(covers, c)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, c := range covers {
-		if !l.ai.waitIndexing(ctx, true) {
-			return ctx.Err()
-		}
-		p, e := l.get(ctx, c.id)
-		if e != nil {
-			continue
-		}
-		key, e := l.warmingPreviewKey(ctx, p, fmt.Sprintf("face:%s:%d:%d:160", c.box, c.width, c.height))
-		if e != nil || l.thumbnails.exists(key) {
-			continue
-		}
-		if !l.ai.waitIndexing(ctx, true) {
-			return ctx.Err()
-		}
-		if _, e = l.faceThumbnail(ctx, p, c.box, c.width, c.height, true); e != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if !waitContext(ctx, 100*time.Millisecond) {
-			return ctx.Err()
-		}
-	}
-	return nil
 }

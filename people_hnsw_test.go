@@ -176,16 +176,33 @@ func TestPersonHNSWExpandsAfterExclusions(t *testing.T) {
 		Items       []personSuggestion
 		SearchIndex string `json:"search_index"`
 	}
-	if getJSON(t, s, path, &result) != 200 || len(result.Items) != 1 || result.Items[0].ID != wanted || result.SearchIndex != "hnsw" {
+	if getJSON(t, s, path, &result) != 200 || len(result.Items) != 1 || result.Items[0].ID != wanted || result.SearchIndex != "file" {
 		t.Fatalf("filtered shortlist: %+v", result)
 	}
 	// Eligibility changes do not need to rebuild the vector index.
-	index := a.personIndex
+	indexPath := filepath.Join(l.config.DataDir, "people-vectors.bin")
+	index, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	postTest(t, s, "/api/curation/"+second.ID, `{"hidden":true}`)
-	if getJSON(t, s, path, &result) != 200 || len(result.Items) != 0 || a.personIndex != index {
+	if getJSON(t, s, path, &result) != 200 || len(result.Items) != 0 {
 		t.Fatal("hidden group leaked or rebuilt index")
 	}
+	if after, err := os.Stat(indexPath); err != nil || !os.SameFile(index, after) {
+		t.Fatal("eligibility change rebuilt the vector file", err)
+	}
 	postTest(t, s, "/api/curation/"+second.ID, `{"hidden":false}`)
+	if _, err = a.db.Exec("UPDATE people SET embedding=? WHERE id=?", vector{0, 1, 0}.blob(), wanted); err != nil {
+		t.Fatal(err)
+	}
+	exactPath := fmt.Sprintf("/api/people/%d/suggestions?limit=25&min_score=0.5&exact=true", source)
+	if getJSON(t, s, exactPath, &result) != 200 || len(result.Items) != 0 {
+		t.Fatal("stale vector survived a revision change")
+	}
+	if after, err := os.Stat(indexPath); err != nil || os.SameFile(index, after) {
+		t.Fatal("vector revision did not replace the file", err)
+	}
 	if err = l.retirePath(ctx, "b.jpg"); err != nil {
 		t.Fatal(err)
 	}

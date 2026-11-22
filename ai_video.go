@@ -282,7 +282,6 @@ func (a *AI) indexVideo(ctx context.Context, j aiJob, p Photo) error {
 	if err = a.save(ctx, j, mlPrediction{Clip: raw, Faces: faces, Width: 1280, Height: 1280}); err != nil {
 		return err
 	}
-	a.statusRevision.Add(1)
 	a.selectionRevision.Add(1)
 	a.pipeline.completed.Add(1)
 	a.mu.Lock()

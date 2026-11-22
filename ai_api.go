@@ -83,35 +83,87 @@ type indexCounts struct {
 	videoIndexed, videoFailed                       int
 }
 
+const indexCountsTTL = 10 * time.Second
+
+// Track only writes that can change the counts, in the same transaction as
+// those writes. Geocoding, retries and unrelated metadata changes stay cheap.
+func (a *AI) initIndexCountRevisions() error {
+	if _, err := a.lib.db.Exec(`
+		INSERT OR IGNORE INTO settings VALUES('index_count_revision','0');
+		CREATE TRIGGER IF NOT EXISTS index_count_images_insert AFTER INSERT ON images BEGIN
+			UPDATE settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_images_delete AFTER DELETE ON images BEGIN
+			UPDATE settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_images_update AFTER UPDATE OF id,path,signature ON images
+			WHEN old.id IS NOT new.id OR old.path IS NOT new.path OR old.signature IS NOT new.signature BEGIN
+			UPDATE settings SET value=value+1 WHERE key='index_count_revision'; END;
+	`); err != nil {
+		return err
+	}
+	_, err := a.db.Exec(`
+		INSERT OR IGNORE INTO ai_settings VALUES('index_count_revision','0');
+		CREATE TRIGGER IF NOT EXISTS index_count_ai_insert AFTER INSERT ON ai_images BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_ai_delete AFTER DELETE ON ai_images BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_ai_update AFTER UPDATE OF image_id,signature,models,error ON ai_images
+			WHEN old.image_id IS NOT new.image_id OR old.signature IS NOT new.signature
+				OR old.models IS NOT new.models OR (old.error='') IS NOT (new.error='') BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_faces_insert AFTER INSERT ON faces BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_faces_delete AFTER DELETE ON faces BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+		CREATE TRIGGER IF NOT EXISTS index_count_faces_update AFTER UPDATE OF image_id,person_id ON faces
+			WHEN old.image_id IS NOT new.image_id OR old.person_id IS NOT new.person_id BEGIN
+			UPDATE ai_settings SET value=value+1 WHERE key='index_count_revision'; END;
+	`)
+	return err
+}
+
 // All open tabs share a short-lived count snapshot. Worker state below stays live.
 // Covering indexes avoid reading large metadata/embedding pages just to count rows.
 func (a *AI) countIndex(ctx context.Context) (indexCounts, error) {
 	a.statusMu.Lock()
 	defer a.statusMu.Unlock()
-	revision := a.statusRevision.Load()
-	if revision == a.statusCountRevision && time.Since(a.statusCountedAt) < 10*time.Second {
+	if time.Since(a.statusCountedAt) < indexCountsTTL {
+		return a.statusCounts, nil
+	}
+	tx, err := a.read.BeginTx(ctx, nil)
+	if err != nil {
+		return indexCounts{}, err
+	}
+	defer tx.Rollback()
+	var catalogRevision, aiRevision int64
+	if err = tx.QueryRowContext(ctx, `SELECT
+		(SELECT value FROM catalog.settings WHERE key='index_count_revision'),
+		(SELECT value FROM ai_settings WHERE key='index_count_revision')`).Scan(&catalogRevision, &aiRevision); err != nil {
+		return indexCounts{}, err
+	}
+	if !a.statusCountedAt.IsZero() && catalogRevision == a.statusCatalogRevision && aiRevision == a.statusAIRevision {
+		a.statusCountedAt = time.Now()
 		return a.statusCounts, nil
 	}
 	var counts indexCounts
-	if err := a.read.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM catalog.images),(SELECT count(*) FROM catalog.images i INDEXED BY image_video_status WHERE NOT ("+photoOnlySQL+"))").Scan(&counts.total, &counts.excluded); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM catalog.images),(SELECT count(*) FROM catalog.images i INDEXED BY image_video_status WHERE NOT ("+photoOnlySQL+"))").Scan(&counts.total, &counts.excluded); err != nil {
 		return counts, err
 	}
 	counts.total -= counts.excluded
-	if err := a.read.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM catalog.images i INDEXED BY image_video_status CROSS JOIN ai_images a INDEXED BY ai_status ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND NOT (`+photoOnlySQL+`)`, a.models).Scan(&counts.videoIndexed, &counts.videoFailed); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM catalog.images i INDEXED BY image_video_status CROSS JOIN ai_images a INDEXED BY ai_status ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND NOT (`+photoOnlySQL+`)`, a.models).Scan(&counts.videoIndexed, &counts.videoFailed); err != nil {
 		return counts, err
 	}
 
-	if err := a.read.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a INDEXED BY ai_status JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&counts.indexed, &counts.failed); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN a.error!='' THEN 1 ELSE 0 END),0) FROM ai_images a INDEXED BY ai_status JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=?`, a.models).Scan(&counts.indexed, &counts.failed); err != nil {
 		return counts, err
 	}
 	counts.indexed -= counts.videoIndexed
 	counts.failed -= counts.videoFailed
-	// Keep faces outermost: otherwise SQLite can choose a skip-scan across all
-	// person groups for every indexed image, making status polling CPU-bound.
-	if err := a.read.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT f.person_id) FROM faces f INDEXED BY face_person CROSS JOIN ai_images a INDEXED BY ai_status ON a.image_id=f.image_id CROSS JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature WHERE a.models=? AND a.error=''`, a.models).Scan(&counts.faces, &counts.people); err != nil {
+	// Start with valid indexed media, then look up faces by image ID.
+	if err := tx.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT f.person_id) FROM ai_images a INDEXED BY ai_status CROSS JOIN catalog.images i INDEXED BY image_person_capture ON i.id=a.image_id AND i.signature=a.signature CROSS JOIN faces f INDEXED BY face_image ON f.image_id=a.image_id WHERE a.models=? AND a.error=''`, a.models).Scan(&counts.faces, &counts.people); err != nil {
 		return counts, err
 	}
-	a.statusCounts, a.statusCountedAt, a.statusCountRevision = counts, time.Now(), revision
+	a.statusCounts, a.statusCountedAt = counts, time.Now()
+	a.statusCatalogRevision, a.statusAIRevision = catalogRevision, aiRevision
 	return counts, nil
 }
 

@@ -60,22 +60,26 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 
 	a.personIndexMu.Lock()
 	defer a.personIndexMu.Unlock()
-	index, err := a.loadPersonHNSW(r.Context())
-	timings.index = time.Since(stage)
+	read, err := a.read.BeginTx(r.Context(), nil)
 	if err != nil {
 		return err
 	}
-	vectors := index.vectors
-	if len(vectors[id]) == 0 {
+	defer read.Rollback()
+	vectors, err := peopleDiskSource(r.Context(), read, a.lib.config.ML.FaceModel, id)
+	if err != nil {
+		return err
+	}
+	if len(vectors) == 0 {
 		var exists int
-		if err = a.read.QueryRowContext(r.Context(), "SELECT count(*) FROM people WHERE id=? AND model=? AND merged_into IS NULL", id, a.lib.config.ML.FaceModel).Scan(&exists); err != nil {
+		if err = read.QueryRowContext(r.Context(), "SELECT count(*) FROM people WHERE id=? AND model=? AND merged_into IS NULL", id, a.lib.config.ML.FaceModel).Scan(&exists); err != nil {
 			return err
 		}
 		if exists == 0 {
 			return bad(404, "Person not found")
 		}
+		timings.index = time.Since(stage)
 		timings.header(w)
-		return writeJSON(w, 200, map[string]any{"items": []personSuggestion{}, "total": 0, "offset": offset, "has_more": false, "approximate": false, "search_index": "hnsw"})
+		return writeJSON(w, 200, map[string]any{"items": []personSuggestion{}, "total": 0, "offset": offset, "has_more": false, "approximate": false, "search_index": "file"})
 	}
 	visible, visibilityArgs, err := a.lib.curationSelection(r, "1=1", nil)
 	media, mediaErr := reviewMediaSQL(r, "i.path")
@@ -85,31 +89,42 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	// Oversample representatives because several can belong to one merged group,
-	// and metadata exclusions are applied afterwards. Expand for selective filters.
-	k := min(len(index.groups), max(1024, 4*(offset+limit)))
-	if r.URL.Query().Get("preview") == "true" {
-		k = min(len(index.groups), max(128, 4*(offset+limit)))
-	}
-	// Useful for exhaustive review and diagnosing ANN recall without changing
-	// assignments or maintaining a second vector store.
-	if r.URL.Query().Get("exact") == "true" {
-		k = len(index.groups)
-	}
-	read, err := a.read.BeginTx(r.Context(), nil)
+	file, reader, err := a.openPeopleDiskIndex(r.Context(), read)
 	if err != nil {
 		return err
 	}
-	defer read.Rollback()
-	var items []personSuggestion
-	for {
-		stage = time.Now()
-		candidates, e := index.candidates(r.Context(), id, k)
-		timings.candidates += time.Since(stage)
-		if e != nil {
-			return e
+	timings.index = time.Since(stage)
+	stage = time.Now()
+	exact := r.URL.Query().Get("exact") == "true"
+	sampled := !exact && samplePeopleDiskSource(vectors)
+	scores, err := scorePeopleDiskIndex(r.Context(), reader, vectors, id, minScore)
+	file.Close()
+	if err != nil {
+		return err
+	}
+	candidates := make([]int64, 0, len(scores))
+	for candidate := range scores {
+		candidates = append(candidates, candidate)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if scores[left] == scores[right] {
+			return left < right
 		}
-		ids, e := json.Marshal(sortedPersonIDs(candidates))
+		return scores[left] > scores[right]
+	})
+	timings.candidates = time.Since(stage)
+	// Check likely results first because the visibility SQL can be expensive.
+	k := min(len(candidates), max(128, 4*(offset+limit)))
+	if r.URL.Query().Get("preview") == "true" {
+		k = min(len(candidates), max(64, 2*(offset+limit)))
+	}
+	if exact {
+		k = len(candidates)
+	}
+	items := []personSuggestion{}
+	for checked := 0; checked < k; {
+		ids, e := json.Marshal(candidates[checked:k])
 		if e != nil {
 			return e
 		}
@@ -121,14 +136,13 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		items = []personSuggestion{}
 		for rows.Next() {
 			var p personSuggestion
 			if err = rows.Scan(&p.ID); err != nil {
 				rows.Close()
 				return err
 			}
-
+			p.Similarity = scores[p.ID]
 			items = append(items, p)
 		}
 		err = rows.Err()
@@ -137,44 +151,20 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		ranked := items[:0]
-		stage = time.Now()
-		for _, p := range items {
-			for _, v := range vectors[id] {
-				if err := r.Context().Err(); err != nil {
-					return err
-				}
-				for _, other := range vectors[p.ID] {
-					if score := similarity(v, other); score > p.Similarity {
-						p.Similarity = score
-					}
-				}
-			}
-			if float64(p.Similarity) < minScore {
-				continue
-			}
-			p.ImageURL = "/api/people/" + strconv.FormatInt(p.ID, 10) + "/image"
-			imageQuery := r.URL.Query()
-			imageQuery.Del("limit")
-			imageQuery.Del("offset")
-			p.ImageURL += "?" + imageQuery.Encode()
-
-			ranked = append(ranked, p)
-		}
-		items = ranked
-		timings.ranking += time.Since(stage)
-		if len(items) >= max(64, 2*(offset+limit)) || k >= len(index.groups) {
+		if len(items) >= max(32, 2*(offset+limit)) || k >= len(candidates) {
 			break
 		}
-		k = min(len(index.groups), k*2)
+		checked, k = k, min(len(candidates), k*2)
 	}
 
+	stage = time.Now()
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Similarity == items[j].Similarity {
 			return items[i].ID < items[j].ID
 		}
 		return items[i].Similarity > items[j].Similarity
 	})
+	timings.ranking = time.Since(stage)
 	total := len(items)
 	items = items[min(offset, total):min(offset+limit, total)]
 	if len(items) > 0 {
@@ -208,14 +198,16 @@ func (a *AI) personSuggestions(w http.ResponseWriter, r *http.Request) error {
 			return e
 		}
 		for i := range items {
-			image := items[i].ImageURL
 			items[i].personSummary = metadata[items[i].ID]
-			items[i].ImageURL = image
+			imageQuery := r.URL.Query()
+			imageQuery.Del("limit")
+			imageQuery.Del("offset")
+			items[i].ImageURL = "/api/people/" + strconv.FormatInt(items[i].ID, 10) + "/image?" + imageQuery.Encode()
 		}
 		timings.metadata += time.Since(stage)
 	}
 	timings.header(w)
-	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total, "approximate": k < len(index.groups), "search_index": "hnsw"})
+	return writeJSON(w, 200, map[string]any{"items": items, "total": total, "offset": offset, "has_more": offset+len(items) < total, "approximate": sampled || k < len(candidates), "search_index": "file"})
 }
 
 func (a *AI) dismissPerson(w http.ResponseWriter, r *http.Request) error {

@@ -338,8 +338,19 @@ func (l *Library) geocode(ctx context.Context) {
 			return
 		}
 		log.Printf("Geocoding ready (GeoNames, CC BY 4.0)")
+		var drainedRevision int64 = -1
 		for ctx.Err() == nil {
-			n, e := l.geocodeBatch(ctx, tree)
+			var revision int64
+			e := l.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='index_count_revision'").Scan(&revision)
+			n := 0
+			if e == nil && revision != drainedRevision {
+				n, e = l.geocodeBatch(ctx, tree)
+				if e == nil && n == 0 {
+					// A concurrent catalog change gets a new revision, so it
+					// cannot be hidden by an empty batch from the old revision.
+					drainedRevision = revision
+				}
+			}
 			if e != nil && ctx.Err() == nil {
 				log.Printf("Geocoding: %v", e)
 			}

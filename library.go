@@ -272,27 +272,51 @@ func (l *Library) directory(relative string) (string, error) {
 	}
 	return filepath.ToSlash(name), nil
 }
-func (l *Library) Run(ctx context.Context) {
+
+// The local marker can request a profile at startup or while the service is
+// running. Keep it separate from the library scan so a scan can't delay capture.
+func (l *Library) runCPUProfiler(ctx context.Context) {
 	request := filepath.Join(l.config.DataDir, "cpu-profile.request")
-	if err := os.Remove(request); err == nil {
-		go func() {
-			path := filepath.Join(l.config.DataDir, "cpu-profile.pprof")
-			f, err := os.Create(path)
-			if err != nil {
+	for ctx.Err() == nil {
+		if err := os.Remove(request); err == nil {
+			if err = l.captureCPUProfile(ctx); err != nil {
 				log.Printf("CPU profile: %v", err)
-				return
 			}
-			defer f.Close()
-			if err = pprof.StartCPUProfile(f); err != nil {
-				log.Printf("CPU profile: %v", err)
-				return
-			}
-			log.Print("CPU profile started (30 seconds)")
-			waitContext(ctx, 30*time.Second)
-			pprof.StopCPUProfile()
-			log.Printf("CPU profile saved: %s", path)
-		}()
+		}
+		if !waitContext(ctx, 5*time.Second) {
+			return
+		}
 	}
+}
+
+func (l *Library) captureCPUProfile(ctx context.Context) error {
+	f, err := os.CreateTemp(l.config.DataDir, ".cpu-profile-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err = pprof.StartCPUProfile(f); err != nil {
+		return err
+	}
+	log.Print("CPU profile started (30 seconds)")
+	waitContext(ctx, 30*time.Second)
+	pprof.StopCPUProfile()
+	if err = f.Close(); err != nil {
+		return err
+	}
+	path := filepath.Join(l.config.DataDir, "cpu-profile.pprof")
+	if err = os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	log.Printf("CPU profile saved: %s", path)
+	return nil
+}
+
+func (l *Library) Run(ctx context.Context) {
+	profileDone := make(chan struct{})
+	go func() { defer close(profileDone); l.runCPUProfiler(ctx) }()
+	defer func() { <-profileDone }()
 	watchDone := make(chan struct{})
 	go func() { defer close(watchDone); l.watchChanges(ctx) }()
 	defer func() { <-watchDone }()
@@ -310,9 +334,6 @@ func (l *Library) Run(ctx context.Context) {
 	thumbnailDone := make(chan struct{})
 	go func() { defer close(thumbnailDone); l.runThumbnailWarming(ctx) }()
 	defer func() { <-thumbnailDone }()
-	peopleDone := make(chan struct{})
-	go func() { defer close(peopleDone); l.warmPeopleThumbnails(ctx) }()
-	defer func() { <-peopleDone }()
 	defer func() { <-aiDone }()
 	l.scanIfDue(ctx)
 	l.optimizeDatabases(ctx)

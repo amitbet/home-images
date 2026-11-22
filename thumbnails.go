@@ -206,7 +206,7 @@ func (l *Library) thumbnail(w http.ResponseWriter, r *http.Request) error {
 	return l.render(w, clone)
 }
 
-func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width, height int, background ...bool) ([]byte, error) {
+func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width, height int) ([]byte, error) {
 	key, err := l.previewKey(p, fmt.Sprintf("face:%s:%d:%d:160", box, width, height))
 	if err != nil {
 		return nil, err
@@ -221,15 +221,6 @@ func (l *Library) faceThumbnail(ctx context.Context, p Photo, box string, width,
 			return l.videoFaceThumbnail(ctx, p, box)
 		}
 		if l.isolateRendering {
-			if len(background) > 0 && background[0] {
-				select {
-				case l.previewDecoder <- struct{}{}:
-					defer func() { <-l.previewDecoder }()
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-				return l.processPreview(ctx, p, 1280, 1280, 80, crop)
-			}
 			l.lastRender.Store(time.Now().UnixNano())
 			defer func() { l.lastRender.Store(time.Now().UnixNano()) }()
 			release, err := l.renderSlots.acquire(ctx)

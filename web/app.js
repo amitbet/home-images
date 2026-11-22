@@ -1445,11 +1445,42 @@ $("personEditor").addEventListener("close",()=>{
   suggestionGeneration++;
   if(mergeGridDirty){mergeGridDirty=false;void load();}
 });
-async function refreshStatus() {
+let indexStatusInView = false;
+let indexStatusTimer = null;
+let indexStatusRequest = null;
+const indexStatusVisible = () =>
+  indexStatusInView && document.visibilityState === "visible";
+
+function updateIndexStatusPolling() {
+  if (!indexStatusVisible()) {
+    clearInterval(indexStatusTimer);
+    indexStatusTimer = null;
+    indexStatusRequest?.abort();
+    indexStatusRequest = null;
+    return;
+  }
+  if (indexStatusTimer === null) {
+    indexStatusTimer = setInterval(refreshStatus, 10000);
+    void refreshStatus();
+  }
+}
+
+new IntersectionObserver(([entry]) => {
+  indexStatusInView = entry.isIntersecting && entry.intersectionRatio > 0;
+  updateIndexStatusPolling();
+}).observe($("indexStatusCard"));
+
+async function refreshStatus({ replace = false } = {}) {
+  if (!indexStatusVisible() || (indexStatusRequest && !replace)) return;
+  indexStatusRequest?.abort();
+  const request = new AbortController();
+  indexStatusRequest = request;
   try {
-    const s = await api("/api/indexing");
+    const s = await api("/api/indexing", undefined, request.signal);
+    if (indexStatusRequest !== request || !indexStatusVisible()) return;
     state.status = s;
     $("peopleBadge").textContent = number(s.people);
+    $("peopleBadge").hidden = false;
     $("workerDot").classList.toggle("online", s.worker_online && !s.paused);
     $("indexTitle").textContent = !s.enabled
       ? "AI indexing is off"
@@ -1478,8 +1509,11 @@ async function refreshStatus() {
       `${s.worker_url || "No worker configured"} · ${s.clip_model} · ${s.face_model}`;
     $("indexError").textContent = s.last_error || "";
   } catch (e) {
+    if (indexStatusRequest !== request || !indexStatusVisible()) return;
     $("indexTitle").textContent = "Service unavailable";
     $("indexDetail").textContent = "Reconnecting…";
+  } finally {
+    if (indexStatusRequest === request) indexStatusRequest = null;
   }
 }
 $("pause").onclick = async () => {
@@ -1487,7 +1521,7 @@ $("pause").onclick = async () => {
     await api("/api/indexing/control", {
       action: state.status?.paused ? "resume" : "pause",
     });
-    refreshStatus();
+    refreshStatus({ replace: true });
   } catch (e) {
     toast(e.message);
   }
@@ -1495,7 +1529,7 @@ $("pause").onclick = async () => {
 $("retry").onclick = async () => {
   try {
     await api("/api/indexing/control", { action: "retry" });
-    refreshStatus();
+    refreshStatus({ replace: true });
   } catch (e) {
     toast(e.message);
   }
@@ -2619,9 +2653,6 @@ window.addEventListener("keydown", (e) => {
     $("shuffle").setAttribute("aria-pressed", "true");
   }
   viewChrome();
-  refreshStatus();
-  // Status must keep updating even while the initial gallery request is pending.
-  setInterval(refreshStatus, 10000);
   loadSaved();
   await load();
   if (p.get("image")) {
@@ -2766,7 +2797,7 @@ async function acquireWakeLock() {
   }
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") refreshStatus();
+  updateIndexStatusPolling();
   if (document.visibilityState === "visible" && state.playing)
     acquireWakeLock();
 });

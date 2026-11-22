@@ -169,9 +169,6 @@ func (l *Library) retirePath(ctx context.Context, path string) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if l.ai != nil {
-		l.ai.statusRevision.Add(1)
-	}
 	return nil
 }
 func (l *Library) retireTree(ctx context.Context, path string) error {

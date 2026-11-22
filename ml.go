@@ -104,6 +104,29 @@ type mlClient struct {
 func newML(c MLConfig) *mlClient {
 	return &mlClient{c, &http.Client{Timeout: 180 * time.Second, Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext, MaxIdleConnsPerHost: 6, MaxConnsPerHost: 6, ResponseHeaderTimeout: 175 * time.Second}}}
 }
+
+func (m *mlClient) ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(m.config.URL, "/")+"/ping", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("Mac ML ping failed: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNotFound, http.StatusMethodNotAllowed:
+		// Predict-only workers can report availability through the next inference.
+		return nil
+	default:
+		return fmt.Errorf("Mac ML ping returned HTTP %d", resp.StatusCode)
+	}
+}
+
 func (m *mlClient) predict(ctx context.Context, image []byte, text string) (mlPrediction, error) {
 	var out mlPrediction
 	var body bytes.Buffer

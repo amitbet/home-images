@@ -28,37 +28,37 @@ type aiPipelineStats struct {
 	started     atomic.Int64
 }
 type AI struct {
-	videoWorked         bool
-	personIndexMu       sync.Mutex
-	personIndex         *personHNSW
-	peopleMu            sync.Mutex
-	peopleSummary       *peopleSnapshot
-	peopleBuilding      chan struct{}
-	statusMu            sync.Mutex
-	statusCounts        indexCounts
-	statusCountedAt     time.Time
-	statusRevision      atomic.Uint64
-	statusCountRevision uint64
-	pipeline            aiPipelineStats
-	lib                 *Library
-	db, read            *sql.DB // Independent WAL database; never hold catalog connections during inference.
-	ml                  *mlClient
-	models              string
-	paused              atomic.Bool
-	mu                  sync.Mutex
-	active              string
-	lastError           string
-	lastSuccess         string
-	online              bool
-	textCache           map[string]vector
-	textMu              sync.Mutex
-	localText           *cliptext.Encoder
-	groupCache          map[string]photoGroupSummary
-	searchSlot          chan struct{}
-	suggestionSlot      chan struct{}
-	playMu              sync.Mutex
-	playCache           map[string]playSelection
-	selectionRevision   atomic.Uint64
+	videoWorked           bool
+	personIndexMu         sync.Mutex
+	personIndex           *personHNSW
+	peopleMu              sync.Mutex
+	peopleSummary         *peopleSnapshot
+	peopleBuilding        chan struct{}
+	statusMu              sync.Mutex
+	statusCounts          indexCounts
+	statusCountedAt       time.Time
+	statusCatalogRevision int64
+	statusAIRevision      int64
+	pipeline              aiPipelineStats
+	lib                   *Library
+	db, read              *sql.DB // Independent WAL database; never hold catalog connections during inference.
+	ml                    *mlClient
+	models                string
+	paused                atomic.Bool
+	mu                    sync.Mutex
+	active                string
+	lastError             string
+	lastSuccess           string
+	online                bool
+	textCache             map[string]vector
+	textMu                sync.Mutex
+	localText             *cliptext.Encoder
+	groupCache            map[string]photoGroupSummary
+	searchSlot            chan struct{}
+	suggestionSlot        chan struct{}
+	playMu                sync.Mutex
+	playCache             map[string]playSelection
+	selectionRevision     atomic.Uint64
 	// editRevision counts user edits only; indexing never bumps it, so
 	// playback can drop snapshots immediately on edits yet keep serving
 	// them while background indexing keeps changing selectionRevision.
@@ -93,6 +93,9 @@ func newAI(l *Library) (*AI, error) {
  CREATE TABLE IF NOT EXISTS person_dismissals(a INTEGER NOT NULL,b INTEGER NOT NULL,PRIMARY KEY(a,b));
  CREATE TABLE IF NOT EXISTS ai_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	if err != nil {
+		return fail(err)
+	}
+	if err = a.initIndexCountRevisions(); err != nil {
 		return fail(err)
 	}
 	if err = a.initPersonHNSW(); err != nil {
@@ -150,7 +153,7 @@ func newAI(l *Library) (*AI, error) {
 		}
 	}
 
-	a.warmPersonHNSW()
+	a.warmPeopleDiskIndex()
 	return a, nil
 }
 func (a *AI) Close() {
@@ -164,7 +167,6 @@ func (a *AI) Close() {
 		a.localText = nil
 	}
 	a.textMu.Unlock()
-	a.flushPersonHNSW()
 	if a.ml != nil {
 		a.ml.http.CloseIdleConnections()
 	}
@@ -233,9 +235,32 @@ func (a *AI) Run(ctx context.Context) {
 	}
 	a.pipeline.started.Store(time.Now().UnixNano())
 	cursor := ""
+	var retryDelay time.Duration
+	probeWorker := true
+	waitForWorker := func(err error) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		probeWorker = true
+		retryDelay = min(max(30*time.Second, 2*retryDelay), 10*time.Minute)
+		a.mu.Lock()
+		a.online = false
+		a.mu.Unlock()
+		a.setError(fmt.Errorf("%w (next ML check in %s)", err, retryDelay))
+		return waitContext(ctx, retryDelay)
+	}
 	for ctx.Err() == nil {
 		if !a.waitIndexing(ctx, true) {
 			return
+		}
+		if probeWorker {
+			if err := a.ml.ping(ctx); err != nil {
+				if !waitForWorker(err) {
+					return
+				}
+				continue
+			}
+			probeWorker = false
 		}
 		jobs, err := a.jobs(ctx, cursor)
 		if err != nil {
@@ -260,11 +285,18 @@ func (a *AI) Run(ctx context.Context) {
 				}
 			}
 			if e := a.indexNextVideo(ctx); e != nil {
+				if errors.Is(e, errVideoWorker) {
+					if !waitForWorker(e) {
+						return
+					}
+					continue
+				}
 				a.setError(e)
 				if !waitContext(ctx, 30*time.Second) {
 					return
 				}
 			} else if a.videoWorked {
+				retryDelay = 0
 				cursor = ""
 				continue
 			}
@@ -307,16 +339,13 @@ func (a *AI) Run(ctx context.Context) {
 			},
 			func(result aiPipelineResult[aiJob]) error {
 				if result.inferenceError {
-					a.mu.Lock()
-					a.online = false
-					a.mu.Unlock()
-					a.setError(result.err)
 					return result.err
 				}
 				if result.err != nil {
 					a.recordFailure(ctx, result.job, result.err)
 					return nil
 				}
+				retryDelay = 0
 				start := time.Now()
 				err := a.save(ctx, result.job, result.prediction)
 				a.pipeline.saveUS.Add(time.Since(start).Microseconds())
@@ -343,7 +372,7 @@ func (a *AI) Run(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			if !waitContext(ctx, 30*time.Second) {
+			if !waitForWorker(err) {
 				return
 			}
 			continue

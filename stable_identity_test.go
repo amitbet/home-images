@@ -99,6 +99,10 @@ func TestDuplicateQuarantineRestoreAndVerification(t *testing.T) {
 	if code := postTest(t, s, "/api/duplicates/quarantine-copy", string(body)); code != 200 {
 		t.Fatal(code)
 	}
+	// The shared status snapshot refreshes on its next polling window.
+	l.ai.statusMu.Lock()
+	l.ai.statusCountedAt = time.Now().Add(-indexCountsTTL - time.Second)
+	l.ai.statusMu.Unlock()
 	if getJSON(t, s, "/api/indexing", &after) != 200 || after.Total != before.Total-1 {
 		t.Fatalf("indexing total after single-copy trash: before %d after %d", before.Total, after.Total)
 	}

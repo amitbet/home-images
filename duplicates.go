@@ -240,9 +240,6 @@ func (l *Library) restoreDuplicate(w http.ResponseWriter, r *http.Request) error
 	if err = l.storePhoto(r.Context(), photo, fmt.Sprintf("go1:%d:%d", info.Size(), info.ModTime().UnixNano())); err != nil {
 		return err
 	}
-	if l.ai != nil {
-		l.ai.statusRevision.Add(1)
-	}
 	_, err = l.db.ExecContext(r.Context(), "DELETE FROM duplicate_quarantine WHERE token=?", body.Token)
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"net/http"
 	"testing"
 )
 
@@ -39,8 +40,8 @@ func TestFaceCropUsesFaceRegion(t *testing.T) {
 		t.Fatal("accepted invalid dimensions")
 	}
 }
-func TestFaceSeedAndExistingPeopleWarming(t *testing.T) {
-	l, _, _ := fixture(t)
+func TestFaceSeedAndOnDemandThumbnail(t *testing.T) {
+	l, s, _ := fixture(t)
 	ctx := context.Background()
 	j := testJob(t, l, "a.jpg")
 	p, err := l.get(ctx, j.ID)
@@ -66,15 +67,23 @@ func TestFaceSeedAndExistingPeopleWarming(t *testing.T) {
 	if err != nil || cfg.Width != 160 || cfg.Height != 160 {
 		t.Fatal(cfg, err)
 	}
-	// A saved existing group gets warmed without any request from a browser.
 	if err = l.ai.save(ctx, j, pred); err != nil {
 		t.Fatal(err)
 	}
-	l.thumbnails = newThumbnailCache(t.TempDir())
-	if err = l.warmPeoplePass(ctx); err != nil {
+	var personID int64
+	if err = l.ai.read.QueryRowContext(ctx, "SELECT person_id FROM faces WHERE image_id=?", j.ID).Scan(&personID); err != nil {
 		t.Fatal(err)
 	}
+	l.thumbnails = newThumbnailCache(t.TempDir())
+	res, err := s.Client().Get(fmt.Sprintf("%s/api/people/%d/image", s.URL, personID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("unexpected face thumbnail response: %s %s", res.Status, res.Header.Get("Content-Type"))
+	}
 	if _, ok = l.thumbnails.read(key); !ok {
-		t.Fatal("existing people cover was not warmed")
+		t.Fatal("requested people cover was not cached")
 	}
 }

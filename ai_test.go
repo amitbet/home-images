@@ -365,6 +365,10 @@ func TestWorkerExecutableKeepsServing(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	ml := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/ping" {
+			_, _ = w.Write([]byte("pong"))
+			return
+		}
 		if err := r.ParseMultipartForm(8 << 20); err != nil {
 			t.Error(err)
 		}

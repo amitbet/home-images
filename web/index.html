@@ -49,7 +49,7 @@
           <span>♡</span> Favorites</button
         ><button class="nav" data-view="people">
           <span>♧</span> People
-          <span id="peopleBadge" class="badge">0</span></button
+          <span id="peopleBadge" class="badge" hidden></span></button
         ><button class="nav" data-view="albums"><span>▱</span> Albums</button
         ><button class="nav" data-view="memories">
           <span>◷</span> On this day</button
@@ -67,7 +67,7 @@
       </div>
       <div id="savedSelections" class="saved-selections">
       </div>
-      <section class="index-card" aria-label="Indexing status">
+      <section id="indexStatusCard" class="index-card" aria-label="Indexing status">
         <div class="index-title">
           <span id="workerDot" class="status-dot"></span
           ><strong id="indexTitle">Connecting…</strong>
@@ -75,7 +75,7 @@
         <p id="indexDetail">Checking your library</p>
         <div class="progress"><div id="progressBar"></div></div>
         <p id="indexCounts" class="index-counts"></p>
-        <button id="pause" class="text-button">Pause indexing</button
+        <button id="pause" class="text-button" disabled>Pause indexing</button
         ><button id="retry" class="text-button" hidden>Retry failed</button>
         <details>
           <summary>Worker details</summary>

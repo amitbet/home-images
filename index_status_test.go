@@ -36,30 +36,11 @@ func TestIndexStatusCountsReuseAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.statusMu.Lock()
-	a.statusCountedAt = time.Now().Add(-11 * time.Second)
+	a.statusCountedAt = time.Now().Add(-indexCountsTTL - time.Second)
 	a.statusMu.Unlock()
 	counts, err = a.countIndex(ctx)
 	if err != nil || counts != (indexCounts{total: 5}) {
 		t.Fatal(counts, err)
-	}
-}
-
-func TestPausedPeopleWarmingDoesNotWaitForDatabase(t *testing.T) {
-	l, _, _ := fixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	l.ai.read.SetMaxOpenConns(1)
-	conn, err := l.ai.read.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	l.ai.paused.Store(true)
-	if err := l.warmPeoplePass(ctx); err != context.DeadlineExceeded {
-		t.Fatal(err)
-	}
-	if l.ai.read.Stats().WaitCount != 0 {
-		t.Fatal("paused warmer attempted a database query")
 	}
 }
 
@@ -75,6 +56,13 @@ func TestIndexCountsRefreshWhenFilesMoveToTrash(t *testing.T) {
 	if done, failed := waitBatch(t, l, id); done != 2 || failed != 0 {
 		t.Fatal(done, failed)
 	}
+	cached, err := l.ai.countIndex(ctx)
+	if err != nil || cached != before {
+		t.Fatalf("trash bypassed the count cache: %+v, %v", cached, err)
+	}
+	l.ai.statusMu.Lock()
+	l.ai.statusCountedAt = time.Now().Add(-indexCountsTTL - time.Second)
+	l.ai.statusMu.Unlock()
 	after, err := l.ai.countIndex(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +74,9 @@ func TestIndexCountsRefreshWhenFilesMoveToTrash(t *testing.T) {
 	if done, failed := waitBatch(t, l, restore); done != 2 || failed != 0 {
 		t.Fatal(done, failed)
 	}
+	l.ai.statusMu.Lock()
+	l.ai.statusCountedAt = time.Now().Add(-indexCountsTTL - time.Second)
+	l.ai.statusMu.Unlock()
 	restored, err := l.ai.countIndex(ctx)
 	if err != nil || restored.total != before.total {
 		t.Fatalf("restore total %d expected %d: %v", restored.total, before.total, err)
